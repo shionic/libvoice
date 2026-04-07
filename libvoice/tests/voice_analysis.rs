@@ -65,6 +65,16 @@ fn assert_reports_close(full: &AnalysisReport, streamed: &AnalysisReport) {
         streamed_spectral.bandwidth_hz.mean,
         0.01,
     );
+
+    match (&full.overall.formants, &streamed.overall.formants) {
+        (Some(full_formants), Some(streamed_formants)) => {
+            approx_eq(full_formants.f1_hz.mean, streamed_formants.f1_hz.mean, 0.01);
+            approx_eq(full_formants.f2_hz.mean, streamed_formants.f2_hz.mean, 0.01);
+            approx_eq(full_formants.f3_hz.mean, streamed_formants.f3_hz.mean, 0.01);
+        }
+        (None, None) => {}
+        _ => panic!("formant summaries diverged between full and streamed analysis"),
+    }
 }
 
 #[test]
@@ -237,6 +247,19 @@ fn voiced_sine_produces_concentrated_spectral_summary() {
 }
 
 #[test]
+fn voiced_signal_produces_stable_formant_summary() {
+    let sample_rate = 16_000;
+    let config = AnalyzerConfig::new(sample_rate);
+    let samples = synth_sine(sample_rate, 220.0, 1.0, 0.5);
+
+    let report = VoiceAnalyzer::analyze_buffer(config, &samples);
+    if let Some(formants) = report.overall.formants {
+        assert!(formants.f1_hz.mean < formants.f2_hz.mean);
+        assert!(formants.f2_hz.mean < formants.f3_hz.mean);
+    }
+}
+
+#[test]
 fn report_serializes_to_json() {
     let sample_rate = 16_000;
     let samples = synth_sine(sample_rate, 220.0, 0.5, 0.5);
@@ -247,4 +270,5 @@ fn report_serializes_to_json() {
     assert!(json.contains("\"overall\""));
     assert!(json.contains("\"chunks\""));
     assert!(json.contains("\"spectral\""));
+    assert!(json.contains("\"formants\""));
 }

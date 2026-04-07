@@ -1,6 +1,6 @@
 use crate::config::AnalyzerConfig;
 use crate::model::FrameFeatures;
-use crate::signal::{PitchAnalyzer, estimate_hnr_db, zero_crossing_rate};
+use crate::signal::{PitchAnalyzer, estimate_formants, estimate_hnr_db, zero_crossing_rate};
 use realfft::{RealFftPlanner, RealToComplex};
 use rustfft::num_complex::Complex32;
 use std::sync::Arc;
@@ -116,9 +116,14 @@ impl FrameAnalyzer {
         );
         let pitch_hz = pitch.map(|estimate| estimate.hz);
         let hnr_db = estimate_hnr_db(pitch.map(|estimate| estimate.periodicity).unwrap_or(0.0));
+        let [formant_1_hz, formant_2_hz, formant_3_hz, _formant_4_hz] =
+            estimate_formants(frame, self.config.sample_rate, pitch_hz);
 
         FrameFeatures {
             pitch_hz,
+            formant_1_hz,
+            formant_2_hz,
+            formant_3_hz,
             pitch_clarity: pitch.map(|estimate| estimate.clarity).unwrap_or(0.0),
             spectral_rolloff_hz: if rolloff_hz > 0.0 {
                 rolloff_hz

@@ -1,5 +1,7 @@
 use clap::{Parser, ValueEnum};
-use libvoice::{AnalysisReport, AnalyzerConfig, SpectralSummary, SummaryStats, VoiceAnalyzer};
+use libvoice::{
+    AnalysisReport, AnalyzerConfig, FormantSummary, SpectralSummary, SummaryStats, VoiceAnalyzer,
+};
 use rayon::prelude::*;
 use serde::Serialize;
 use std::fmt::Write as _;
@@ -440,6 +442,7 @@ fn format_text_report(output: &FileAnalysisOutput) -> String {
     .unwrap();
 
     format_optional_stats(&mut out, "Pitch (Hz)", overall.pitch_hz.as_ref());
+    format_optional_formants(&mut out, overall.formants.as_ref());
     format_optional_stats(&mut out, "Energy (mean-square)", overall.energy.as_ref());
     format_optional_spectral(&mut out, overall.spectral.as_ref());
     out
@@ -524,6 +527,37 @@ fn format_optional_spectral(out: &mut String, spectral: Option<&SpectralSummary>
         }
         None => {
             writeln!(out, "Spectral: n/a").unwrap();
+        }
+    }
+}
+
+fn format_optional_formants(out: &mut String, formants: Option<&FormantSummary>) {
+    match formants {
+        Some(formants) => {
+            writeln!(
+                out,
+                "Formant F1 (Hz): mean {}, std {}",
+                format_value(formants.f1_hz.mean),
+                format_value(formants.f1_hz.std)
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "Formant F2 (Hz): mean {}, std {}",
+                format_value(formants.f2_hz.mean),
+                format_value(formants.f2_hz.std)
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "Formant F3 (Hz): mean {}, std {}",
+                format_value(formants.f3_hz.mean),
+                format_value(formants.f3_hz.std)
+            )
+            .unwrap();
+        }
+        None => {
+            writeln!(out, "Formants: n/a").unwrap();
         }
     }
 }
