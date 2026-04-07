@@ -381,68 +381,44 @@ fn lpc_coefficients(signal: &[f32], order: usize) -> Option<Vec<f32>> {
         return None;
     }
 
-    let mut matrix = vec![vec![0.0_f64; order]; order];
-    let mut rhs = vec![0.0_f64; order];
-    for row in 0..order {
-        rhs[row] = -autocorrelation[row + 1];
-        for col in 0..order {
-            let lag = row.abs_diff(col);
-            matrix[row][col] = autocorrelation[lag];
-        }
-    }
+    let mut lpc = vec![0.0_f64; order + 1];
+    lpc[0] = 1.0;
 
-    let solution = solve_linear_system(matrix, rhs)?;
-    let mut lpc = Vec::with_capacity(order + 1);
-    lpc.push(1.0);
-    lpc.extend(solution.into_iter().map(|coefficient| coefficient as f32));
-    Some(lpc)
-}
-
-fn solve_linear_system(mut matrix: Vec<Vec<f64>>, mut rhs: Vec<f64>) -> Option<Vec<f64>> {
-    let n = rhs.len();
-    for pivot in 0..n {
-        let mut pivot_row = pivot;
-        let mut pivot_value = matrix[pivot][pivot].abs();
-        for row in (pivot + 1)..n {
-            let candidate = matrix[row][pivot].abs();
-            if candidate > pivot_value {
-                pivot_row = row;
-                pivot_value = candidate;
-            }
+    let mut error = autocorrelation[0];
+    for i in 1..=order {
+        let mut reflection = autocorrelation[i];
+        for j in 1..i {
+            reflection += lpc[j] * autocorrelation[i - j];
         }
 
-        if !pivot_value.is_finite() || pivot_value <= 1.0e-12 {
+        reflection = -reflection / error;
+        if !reflection.is_finite() {
             return None;
         }
 
-        if pivot_row != pivot {
-            matrix.swap(pivot, pivot_row);
-            rhs.swap(pivot, pivot_row);
+        for j in 1..=((i - 1) / 2) {
+            let left = lpc[j];
+            let right = lpc[i - j];
+            lpc[j] = left + reflection * right;
+            lpc[i - j] = right + reflection * left;
         }
 
-        let pivot_scale = matrix[pivot][pivot];
-        for col in pivot..n {
-            matrix[pivot][col] /= pivot_scale;
+        if i % 2 == 0 {
+            let mid = i / 2;
+            lpc[mid] += reflection * lpc[mid];
         }
-        rhs[pivot] /= pivot_scale;
 
-        for row in 0..n {
-            if row == pivot {
-                continue;
-            }
-            let factor = matrix[row][pivot];
-            if factor.abs() <= 1.0e-12 {
-                continue;
-            }
-            for col in pivot..n {
-                matrix[row][col] -= factor * matrix[pivot][col];
-            }
-            rhs[row] -= factor * rhs[pivot];
+        lpc[i] = reflection;
+        error *= 1.0 - reflection * reflection;
+        if !error.is_finite() || error <= 1.0e-12 {
+            return None;
         }
     }
 
-    if rhs.iter().all(|value| value.is_finite()) {
-        Some(rhs)
+    let mut lpc_f32 = Vec::with_capacity(order + 1);
+    lpc_f32.extend(lpc.into_iter().map(|coefficient| coefficient as f32));
+    if lpc_f32.iter().all(|coefficient| coefficient.is_finite()) {
+        Some(lpc_f32)
     } else {
         None
     }
