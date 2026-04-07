@@ -1,0 +1,12 @@
+[package]
+name = "libvoice"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+realfft = "3.4"
+rustfft = "6.4"
+serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1.0"
