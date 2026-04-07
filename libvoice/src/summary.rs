@@ -41,11 +41,13 @@ fn summarize_formants(frames: &[FrameFeatures]) -> Option<FormantSummary> {
     let f1_hz = summarize_optional(frames.iter().filter_map(|f| f.formant_1_hz))?;
     let f2_hz = summarize_optional(frames.iter().filter_map(|f| f.formant_2_hz))?;
     let f3_hz = summarize_optional(frames.iter().filter_map(|f| f.formant_3_hz))?;
+    let f4_hz = summarize_optional(frames.iter().filter_map(|f| f.formant_4_hz))?;
 
     Some(FormantSummary {
         f1_hz,
         f2_hz,
         f3_hz,
+        f4_hz,
     })
 }
 

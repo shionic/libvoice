@@ -122,7 +122,7 @@ impl FrameAnalyzer {
         );
         let pitch_hz = pitch.map(|estimate| estimate.hz);
         let hnr_db = estimate_hnr_db(pitch.map(|estimate| estimate.periodicity).unwrap_or(0.0));
-        let [formant_1_hz, formant_2_hz, formant_3_hz, _formant_4_hz] =
+        let [formant_1_hz, formant_2_hz, formant_3_hz, formant_4_hz] =
             self.formant_analyzer.estimate_formants(frame, pitch_hz);
 
         FrameFeatures {
@@ -130,6 +130,7 @@ impl FrameAnalyzer {
             formant_1_hz,
             formant_2_hz,
             formant_3_hz,
+            formant_4_hz,
             pitch_clarity: pitch.map(|estimate| estimate.clarity).unwrap_or(0.0),
             spectral_rolloff_hz: if rolloff_hz > 0.0 {
                 rolloff_hz

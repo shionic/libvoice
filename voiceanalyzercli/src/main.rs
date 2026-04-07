@@ -1,6 +1,7 @@
 use clap::{Parser, ValueEnum};
 use libvoice::{
-    AnalysisReport, AnalyzerConfig, FormantSummary, SpectralSummary, SummaryStats, VoiceAnalyzer,
+    AnalysisReport, AnalyzerConfig, FormantSummary, FrameAnalysis, SpectralSummary, SummaryStats,
+    VoiceAnalyzer,
 };
 use rayon::prelude::*;
 use serde::Serialize;
@@ -21,6 +22,8 @@ use symphonia::core::probe::Hint;
 enum OutputFormat {
     Text,
     Json,
+    FramesJson,
+    VoicedIntervalsJson,
 }
 
 #[derive(Debug, Parser)]
@@ -66,6 +69,15 @@ struct FileAnalysisOutput {
     channels: usize,
     duration_seconds: f32,
     report: AnalysisReport,
+    voiced_frames: Vec<FrameAnalysis>,
+    voiced_intervals: Vec<VoicedInterval>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct VoicedInterval {
+    start_seconds: f32,
+    end_seconds: f32,
+    frame_count: usize,
 }
 
 fn main() {
@@ -113,6 +125,80 @@ fn main() {
             match json {
                 Ok(value) => println!("{value}"),
                 Err(error) => exit_with_error(format!("failed to serialize output: {error}")),
+            }
+        }
+        OutputFormat::FramesJson => {
+            let payload = if failures.is_empty() {
+                serde_json::to_string_pretty(
+                    &outputs
+                        .iter()
+                        .map(|output| {
+                            serde_json::json!({
+                                "path": output.path,
+                                "backend": output.backend,
+                                "sample_rate": output.sample_rate,
+                                "channels": output.channels,
+                                "duration_seconds": output.duration_seconds,
+                                "voiced_frames": output.voiced_frames,
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            } else {
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "files": outputs.iter().map(|output| serde_json::json!({
+                        "path": output.path,
+                        "backend": output.backend,
+                        "sample_rate": output.sample_rate,
+                        "channels": output.channels,
+                        "duration_seconds": output.duration_seconds,
+                        "voiced_frames": output.voiced_frames,
+                    })).collect::<Vec<_>>(),
+                    "errors": failures,
+                }))
+            };
+
+            match payload {
+                Ok(value) => println!("{value}"),
+                Err(error) => exit_with_error(format!("failed to serialize frame output: {error}")),
+            }
+        }
+        OutputFormat::VoicedIntervalsJson => {
+            let payload = if failures.is_empty() {
+                serde_json::to_string_pretty(
+                    &outputs
+                        .iter()
+                        .map(|output| {
+                            serde_json::json!({
+                                "path": output.path,
+                                "backend": output.backend,
+                                "sample_rate": output.sample_rate,
+                                "channels": output.channels,
+                                "duration_seconds": output.duration_seconds,
+                                "voiced_intervals": output.voiced_intervals,
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            } else {
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "files": outputs.iter().map(|output| serde_json::json!({
+                        "path": output.path,
+                        "backend": output.backend,
+                        "sample_rate": output.sample_rate,
+                        "channels": output.channels,
+                        "duration_seconds": output.duration_seconds,
+                        "voiced_intervals": output.voiced_intervals,
+                    })).collect::<Vec<_>>(),
+                    "errors": failures,
+                }))
+            };
+
+            match payload {
+                Ok(value) => println!("{value}"),
+                Err(error) => {
+                    exit_with_error(format!("failed to serialize interval output: {error}"))
+                }
             }
         }
     }
@@ -205,6 +291,7 @@ fn analyze_file_with_symphonia(path: &Path, args: &Args) -> Result<FileAnalysisO
     let mut analyzer = VoiceAnalyzer::new(build_config(sample_rate, args));
     let mut mono_scratch = Vec::new();
     let mut chunks = Vec::new();
+    let mut voiced_frames = Vec::new();
     let mut processed_samples = 0usize;
 
     loop {
@@ -248,7 +335,9 @@ fn analyze_file_with_symphonia(path: &Path, args: &Args) -> Result<FileAnalysisO
 
         let mono = fold_to_mono(decoded, channel_count, &mut mono_scratch);
         processed_samples += mono.len();
-        chunks.push(analyzer.process_chunk(mono));
+        let (chunk, frames) = analyzer.process_chunk_with_frames(mono);
+        chunks.push(chunk);
+        voiced_frames.extend(frames);
     }
 
     let report = AnalysisReport {
@@ -265,6 +354,8 @@ fn analyze_file_with_symphonia(path: &Path, args: &Args) -> Result<FileAnalysisO
         channels: channel_count,
         duration_seconds,
         report,
+        voiced_intervals: merge_voiced_intervals(&voiced_frames),
+        voiced_frames,
     })
 }
 
@@ -332,7 +423,13 @@ fn analyze_file_with_ffmpeg(path: &Path, args: &Args) -> Result<FileAnalysisOutp
         .collect();
 
     let sample_rate = 16_000;
-    let report = VoiceAnalyzer::analyze_buffer(build_config(sample_rate, args), &samples);
+    let mut analyzer = VoiceAnalyzer::new(build_config(sample_rate, args));
+    let (chunk, voiced_frames) = analyzer.process_chunk_with_frames(&samples);
+    let report = AnalysisReport {
+        config: analyzer.config().clone(),
+        chunks: vec![chunk],
+        overall: analyzer.finalize(),
+    };
     let duration_seconds = samples.len() as f32 / sample_rate as f32;
 
     Ok(FileAnalysisOutput {
@@ -342,6 +439,8 @@ fn analyze_file_with_ffmpeg(path: &Path, args: &Args) -> Result<FileAnalysisOutp
         channels: 1,
         duration_seconds,
         report,
+        voiced_intervals: merge_voiced_intervals(&voiced_frames),
+        voiced_frames,
     })
 }
 
@@ -446,6 +545,40 @@ fn format_text_report(output: &FileAnalysisOutput) -> String {
     format_optional_stats(&mut out, "Energy (mean-square)", overall.energy.as_ref());
     format_optional_spectral(&mut out, overall.spectral.as_ref());
     out
+}
+
+fn merge_voiced_intervals(frames: &[FrameAnalysis]) -> Vec<VoicedInterval> {
+    if frames.is_empty() {
+        return Vec::new();
+    }
+
+    let mut intervals = Vec::new();
+    let mut current_start = frames[0].start_seconds;
+    let mut current_end = frames[0].end_seconds;
+    let mut frame_count = 1usize;
+
+    for frame in frames.iter().skip(1) {
+        if frame.start_seconds <= current_end + 1.0e-3 {
+            current_end = frame.end_seconds.max(current_end);
+            frame_count += 1;
+        } else {
+            intervals.push(VoicedInterval {
+                start_seconds: current_start,
+                end_seconds: current_end,
+                frame_count,
+            });
+            current_start = frame.start_seconds;
+            current_end = frame.end_seconds;
+            frame_count = 1;
+        }
+    }
+
+    intervals.push(VoicedInterval {
+        start_seconds: current_start,
+        end_seconds: current_end,
+        frame_count,
+    });
+    intervals
 }
 
 fn format_optional_stats(out: &mut String, label: &str, stats: Option<&SummaryStats>) {
@@ -553,6 +686,13 @@ fn format_optional_formants(out: &mut String, formants: Option<&FormantSummary>)
                 "Formant F3 (Hz): mean {}, std {}",
                 format_value(formants.f3_hz.mean),
                 format_value(formants.f3_hz.std)
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "Formant F4 (Hz): mean {}, std {}",
+                format_value(formants.f4_hz.mean),
+                format_value(formants.f4_hz.std)
             )
             .unwrap();
         }

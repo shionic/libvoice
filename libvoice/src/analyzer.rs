@@ -151,6 +151,7 @@ impl VoiceAnalyzer {
             formant_1_hz: features.formant_1_hz,
             formant_2_hz: features.formant_2_hz,
             formant_3_hz: features.formant_3_hz,
+            formant_4_hz: features.formant_4_hz,
             pitch_clarity: features.pitch_clarity,
             spectral_rolloff_hz: features.spectral_rolloff_hz,
             spectral_centroid_hz: features.spectral_centroid_hz,

@@ -612,11 +612,13 @@ fn summarize_formants(frames: &[FrameAnalysis]) -> Option<libvoice::FormantSumma
     let f1_hz = summarize_optional_stats(frames.iter().filter_map(|frame| frame.formant_1_hz))?;
     let f2_hz = summarize_optional_stats(frames.iter().filter_map(|frame| frame.formant_2_hz))?;
     let f3_hz = summarize_optional_stats(frames.iter().filter_map(|frame| frame.formant_3_hz))?;
+    let f4_hz = summarize_optional_stats(frames.iter().filter_map(|frame| frame.formant_4_hz))?;
 
     Some(libvoice::FormantSummary {
         f1_hz,
         f2_hz,
         f3_hz,
+        f4_hz,
     })
 }
 

@@ -29,6 +29,7 @@ pub struct FormantSummary {
     pub f1_hz: SummaryStats,
     pub f2_hz: SummaryStats,
     pub f3_hz: SummaryStats,
+    pub f4_hz: SummaryStats,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -90,6 +91,7 @@ pub struct FrameAnalysis {
     pub formant_1_hz: Option<f32>,
     pub formant_2_hz: Option<f32>,
     pub formant_3_hz: Option<f32>,
+    pub formant_4_hz: Option<f32>,
     pub pitch_clarity: f32,
     pub spectral_rolloff_hz: f32,
     pub spectral_centroid_hz: f32,
@@ -107,6 +109,7 @@ pub(crate) struct FrameFeatures {
     pub(crate) formant_1_hz: Option<f32>,
     pub(crate) formant_2_hz: Option<f32>,
     pub(crate) formant_3_hz: Option<f32>,
+    pub(crate) formant_4_hz: Option<f32>,
     pub(crate) pitch_clarity: f32,
     pub(crate) spectral_rolloff_hz: f32,
     pub(crate) spectral_centroid_hz: f32,
