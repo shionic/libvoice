@@ -1,5 +1,5 @@
 use crate::config::AnalyzerConfig;
-use crate::model::{AnalysisReport, ChunkAnalysis, FrameFeatures, OverallAnalysis};
+use crate::model::{AnalysisReport, ChunkAnalysis, FrameAnalysis, FrameFeatures, OverallAnalysis};
 use crate::signal::hann_window;
 use crate::spectral::FrameAnalyzer;
 use crate::summary::{summarize_chunk, summarize_overall};
@@ -11,6 +11,7 @@ pub struct VoiceAnalyzer {
     pending_start: usize,
     processed_samples: usize,
     next_chunk_index: usize,
+    next_frame_index: usize,
     overall_frames: Vec<FrameFeatures>,
 }
 
@@ -26,6 +27,7 @@ impl VoiceAnalyzer {
             pending_start: 0,
             processed_samples: 0,
             next_chunk_index: 0,
+            next_frame_index: 0,
             overall_frames: Vec::new(),
         }
     }
@@ -35,18 +37,29 @@ impl VoiceAnalyzer {
     }
 
     pub fn process_chunk(&mut self, samples: &[f32]) -> ChunkAnalysis {
+        self.process_chunk_with_frames(samples).0
+    }
+
+    pub fn process_chunk_with_frames(
+        &mut self,
+        samples: &[f32],
+    ) -> (ChunkAnalysis, Vec<FrameAnalysis>) {
         self.pending.extend_from_slice(samples);
         self.processed_samples += samples.len();
 
+        let mut frame_features = Vec::new();
         let mut frames = Vec::new();
         while self.pending_start + self.config.frame_size <= self.pending.len() {
+            let frame_start_sample =
+                self.processed_samples - self.pending.len() + self.pending_start;
             let frame =
                 &self.pending[self.pending_start..self.pending_start + self.config.frame_size];
             let features = self.frame_analyzer.analyze(frame);
             self.pending_start += self.config.hop_size;
             if self.is_voiced_frame(&features) {
                 self.overall_frames.push(features.clone());
-                frames.push(features);
+                frame_features.push(features.clone());
+                frames.push(self.build_frame_analysis(frame_start_sample, features));
             }
         }
 
@@ -54,11 +67,11 @@ impl VoiceAnalyzer {
         let chunk = summarize_chunk(
             self.next_chunk_index,
             samples.len(),
-            &frames,
+            &frame_features,
             self.config.frame_step_seconds(),
         );
         self.next_chunk_index += 1;
-        chunk
+        (chunk, frames)
     }
 
     pub fn finalize(&self) -> OverallAnalysis {
@@ -115,5 +128,35 @@ impl VoiceAnalyzer {
             && features.rms >= self.config.voiced_rms_threshold
             && features.spectral_flatness <= self.config.voiced_max_spectral_flatness
             && features.zcr <= self.config.voiced_max_zero_crossing_rate
+    }
+
+    fn build_frame_analysis(
+        &mut self,
+        frame_start_sample: usize,
+        features: FrameFeatures,
+    ) -> FrameAnalysis {
+        let frame_index = self.next_frame_index;
+        self.next_frame_index += 1;
+
+        let end_sample = frame_start_sample + self.config.frame_size;
+        let sample_rate = self.config.sample_rate as f32;
+
+        FrameAnalysis {
+            frame_index,
+            start_sample: frame_start_sample,
+            start_seconds: frame_start_sample as f32 / sample_rate,
+            end_sample,
+            end_seconds: end_sample as f32 / sample_rate,
+            pitch_hz: features.pitch_hz,
+            pitch_clarity: features.pitch_clarity,
+            spectral_rolloff_hz: features.spectral_rolloff_hz,
+            spectral_centroid_hz: features.spectral_centroid_hz,
+            spectral_bandwidth_hz: features.spectral_bandwidth_hz,
+            spectral_flatness: features.spectral_flatness,
+            zcr: features.zcr,
+            rms: features.rms,
+            hnr_db: features.hnr_db,
+            energy: features.energy,
+        }
     }
 }

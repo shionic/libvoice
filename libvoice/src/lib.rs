@@ -9,7 +9,8 @@ mod summary;
 pub use analyzer::VoiceAnalyzer;
 pub use config::AnalyzerConfig;
 pub use model::{
-    AnalysisReport, ChunkAnalysis, JitterMetrics, OverallAnalysis, SpectralSummary, SummaryStats,
+    AnalysisReport, ChunkAnalysis, FrameAnalysis, JitterMetrics, OverallAnalysis, SpectralSummary,
+    SummaryStats,
 };
 
 #[cfg(test)]

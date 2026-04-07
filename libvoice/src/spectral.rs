@@ -1,6 +1,6 @@
 use crate::config::AnalyzerConfig;
 use crate::model::FrameFeatures;
-use crate::signal::{estimate_hnr_db, estimate_pitch_hz, zero_crossing_rate};
+use crate::signal::{PitchAnalyzer, estimate_hnr_db, zero_crossing_rate};
 use realfft::{RealFftPlanner, RealToComplex};
 use rustfft::num_complex::Complex32;
 use std::sync::Arc;
@@ -10,6 +10,8 @@ pub(crate) struct FrameAnalyzer {
     fft: Arc<dyn RealToComplex<f32>>,
     fft_input: Vec<f32>,
     fft_output: Vec<Complex32>,
+    magnitudes: Vec<f32>,
+    pitch_analyzer: PitchAnalyzer,
     window: Vec<f32>,
 }
 
@@ -25,6 +27,8 @@ impl FrameAnalyzer {
             fft,
             fft_input,
             fft_output,
+            magnitudes: Vec::new(),
+            pitch_analyzer: PitchAnalyzer::new(),
             window,
         }
     }
@@ -52,6 +56,7 @@ impl FrameAnalyzer {
         let zcr = zero_crossing_rate(frame);
 
         let bin_hz = self.config.sample_rate as f32 / self.config.frame_size as f32;
+        self.magnitudes.resize(self.fft_output.len(), 0.0);
         let mut magnitude_sum = 0.0_f32;
         let mut weighted_sum = 0.0_f32;
         let mut power_sum = 0.0_f32;
@@ -59,7 +64,10 @@ impl FrameAnalyzer {
         let mut rolloff_hz = 0.0_f32;
 
         for (index, bin) in self.fft_output.iter().enumerate() {
-            let magnitude = bin.norm().max(1.0e-12);
+            let magnitude = (bin.re.mul_add(bin.re, bin.im * bin.im))
+                .sqrt()
+                .max(1.0e-12);
+            self.magnitudes[index] = magnitude;
             let power = magnitude * magnitude;
             let hz = index as f32 * bin_hz;
             magnitude_sum += magnitude;
@@ -77,8 +85,7 @@ impl FrameAnalyzer {
         let mut bandwidth_sum = 0.0_f32;
         let threshold = magnitude_sum * self.config.rolloff_ratio.clamp(0.0, 1.0);
         let mut cumulative = 0.0_f32;
-        for (index, bin) in self.fft_output.iter().enumerate() {
-            let magnitude = bin.norm().max(1.0e-12);
+        for (index, magnitude) in self.magnitudes.iter().copied().enumerate() {
             let hz = index as f32 * bin_hz;
             bandwidth_sum += magnitude * (hz - centroid).powi(2);
             cumulative += magnitude;
@@ -100,7 +107,7 @@ impl FrameAnalyzer {
             0.0
         };
 
-        let pitch = estimate_pitch_hz(
+        let pitch = self.pitch_analyzer.estimate_pitch_hz(
             frame,
             self.config.sample_rate,
             self.config.min_pitch_hz,
@@ -112,7 +119,6 @@ impl FrameAnalyzer {
 
         FrameFeatures {
             pitch_hz,
-            period_seconds: pitch.map(|estimate| estimate.period_seconds),
             pitch_clarity: pitch.map(|estimate| estimate.clarity).unwrap_or(0.0),
             spectral_rolloff_hz: if rolloff_hz > 0.0 {
                 rolloff_hz

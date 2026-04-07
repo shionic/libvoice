@@ -1,12 +1,37 @@
-[package]
-name = "libvoice"
+[workspace]
+members = [
+    "libvoice",
+    "libvoice-wasm",
+    "voiceanalyzercli",
+    "voiceanalyzerserver",
+]
+resolver = "3"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+rust-version = "1.95"
 
-[dependencies]
+[workspace.dependencies]
+async-stream = "0.3"
+axum = "0.8"
+bytes = "1.10"
+clap = { version = "4.5", features = ["derive"] }
+futures-util = "0.3"
+http-body-util = "0.1"
+rayon = "1.10"
 realfft = "3.4"
 rustfft = "6.4"
 serde = { version = "1.0", features = ["derive"] }
-
-[dev-dependencies]
 serde_json = "1.0"
+serde-wasm-bindgen = "0.6"
+symphonia = { version = "0.5.5", features = ["aac", "flac", "isomp4", "mp3", "ogg", "pcm", "vorbis", "wav"] }
+tokio = { version = "1.48", features = ["macros", "rt-multi-thread", "net"] }
+wasm-bindgen = "0.2"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+panic = "abort"
+strip = "debuginfo"

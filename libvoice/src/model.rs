@@ -70,10 +70,28 @@ pub struct AnalysisReport {
     pub overall: OverallAnalysis,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FrameAnalysis {
+    pub frame_index: usize,
+    pub start_sample: usize,
+    pub start_seconds: f32,
+    pub end_sample: usize,
+    pub end_seconds: f32,
+    pub pitch_hz: Option<f32>,
+    pub pitch_clarity: f32,
+    pub spectral_rolloff_hz: f32,
+    pub spectral_centroid_hz: f32,
+    pub spectral_bandwidth_hz: f32,
+    pub spectral_flatness: f32,
+    pub zcr: f32,
+    pub rms: f32,
+    pub hnr_db: f32,
+    pub energy: f32,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct FrameFeatures {
     pub(crate) pitch_hz: Option<f32>,
-    pub(crate) period_seconds: Option<f32>,
     pub(crate) pitch_clarity: f32,
     pub(crate) spectral_rolloff_hz: f32,
     pub(crate) spectral_centroid_hz: f32,

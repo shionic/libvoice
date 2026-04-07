@@ -1,4 +1,3 @@
-/target
-
-# AI
+target/
 .codex
+voiceanalyzer-py

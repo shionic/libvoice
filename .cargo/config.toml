@@ -1,0 +1,7 @@
+[alias]
+xtest = "test --workspace"
+xcheck = "check --workspace"
+xclippy = "clippy --workspace --all-targets"
+xbuild = "build --workspace"
+xrun-cli = "run --release -p voiceanalyzercli --"
+xrun-server = "run --release -p voiceanalyzerserver --"

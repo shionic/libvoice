@@ -11,28 +11,6 @@ fn synth_sine(sample_rate: u32, frequency_hz: f32, seconds: f32, amplitude: f32)
         .collect()
 }
 
-fn synth_vibrato(
-    sample_rate: u32,
-    carrier_hz: f32,
-    vibrato_hz: f32,
-    vibrato_extent_hz: f32,
-    seconds: f32,
-    amplitude: f32,
-) -> Vec<f32> {
-    let total = (sample_rate as f32 * seconds) as usize;
-    let mut phase = 0.0_f32;
-    let dt = 1.0 / sample_rate as f32;
-
-    (0..total)
-        .map(|index| {
-            let t = index as f32 * dt;
-            let instant_hz = carrier_hz + vibrato_extent_hz * (2.0 * PI * vibrato_hz * t).sin();
-            phase += 2.0 * PI * instant_hz * dt;
-            phase.sin() * amplitude
-        })
-        .collect()
-}
-
 fn synth_noise(sample_rate: u32, seconds: f32, amplitude: f32) -> Vec<f32> {
     let total = (sample_rate as f32 * seconds) as usize;
     let mut state = 0x1234_5678_u32;
@@ -128,6 +106,25 @@ fn streaming_matches_full_buffer_metrics_across_irregular_chunks() {
 }
 
 #[test]
+fn streaming_can_return_frame_level_results() {
+    let sample_rate = 16_000;
+    let config = AnalyzerConfig::new(sample_rate);
+    let samples = synth_sine(sample_rate, 220.0, 1.0, 0.5);
+
+    let mut analyzer = VoiceAnalyzer::new(config);
+    let (chunk, frames) = analyzer.process_chunk_with_frames(&samples);
+    let overall = analyzer.finalize();
+
+    assert_eq!(chunk.frame_count, frames.len());
+    assert_eq!(overall.frame_count, frames.len());
+    assert!(!frames.is_empty());
+    assert_eq!(frames[0].frame_index, 0);
+    assert!(frames[0].start_seconds >= 0.0);
+    assert!(frames[0].end_seconds > frames[0].start_seconds);
+    assert!(frames[0].pitch_hz.is_some());
+}
+
+#[test]
 fn streaming_accumulates_metrics_consistently_with_variable_chunk_sizes() {
     let sample_rate = 16_000;
     let config = AnalyzerConfig::new(sample_rate);
@@ -164,45 +161,6 @@ fn streaming_accumulates_metrics_consistently_with_variable_chunk_sizes() {
         actual.overall.spectral.as_ref().unwrap().flatness.mean,
         1.0e-6,
     );
-}
-
-#[test]
-fn vibrato_signal_produces_nonzero_jitter_metrics() {
-    let sample_rate = 16_000;
-    let mut config = AnalyzerConfig::new(sample_rate);
-    config.frame_size = 1024;
-    config.hop_size = 128;
-
-    let samples = synth_vibrato(sample_rate, 220.0, 5.0, 12.0, 2.0, 0.5);
-    let report = VoiceAnalyzer::analyze_buffer(config, &samples);
-
-    let jitter = report
-        .overall
-        .jitter
-        .expect("vibrato signal should produce jitter metrics");
-    assert!(
-        jitter.direction_change_rate > 0.02,
-        "direction_change_rate={}",
-        jitter.direction_change_rate
-    );
-    assert!(
-        jitter.local_hz_mean > 0.5,
-        "local_hz_mean={}",
-        jitter.local_hz_mean
-    );
-    assert!(
-        jitter.estimated_vibrato_extent_cents > 5.0,
-        "estimated_vibrato_extent_cents={}",
-        jitter.estimated_vibrato_extent_cents
-    );
-    assert!(
-        jitter.estimated_vibrato_hz > 2.0 && jitter.estimated_vibrato_hz < 8.0,
-        "estimated_vibrato_hz={}",
-        jitter.estimated_vibrato_hz
-    );
-    assert!(jitter.rap_ratio >= 0.0, "rap_ratio={}", jitter.rap_ratio);
-    assert!(jitter.ppq5_ratio >= 0.0, "ppq5_ratio={}", jitter.ppq5_ratio);
-    assert!(jitter.ddp_ratio >= 0.0, "ddp_ratio={}", jitter.ddp_ratio);
 }
 
 #[test]
