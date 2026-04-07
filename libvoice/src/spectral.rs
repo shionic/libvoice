@@ -1,6 +1,6 @@
 use crate::config::AnalyzerConfig;
 use crate::model::FrameFeatures;
-use crate::signal::{PitchAnalyzer, estimate_formants, estimate_hnr_db, zero_crossing_rate};
+use crate::signal::{FormantAnalyzer, PitchAnalyzer, estimate_hnr_db, zero_crossing_rate};
 use realfft::{RealFftPlanner, RealToComplex};
 use rustfft::num_complex::Complex32;
 use std::sync::Arc;
@@ -12,7 +12,9 @@ pub(crate) struct FrameAnalyzer {
     fft_output: Vec<Complex32>,
     magnitudes: Vec<f32>,
     pitch_analyzer: PitchAnalyzer,
+    formant_analyzer: FormantAnalyzer,
     window: Vec<f32>,
+    bin_hz: f32,
 }
 
 impl FrameAnalyzer {
@@ -21,6 +23,8 @@ impl FrameAnalyzer {
         let fft = planner.plan_fft_forward(config.frame_size);
         let fft_input = fft.make_input_vec();
         let fft_output = fft.make_output_vec();
+        let formant_analyzer = FormantAnalyzer::new(config.sample_rate, config.frame_size);
+        let bin_hz = config.sample_rate as f32 / config.frame_size as f32;
 
         Self {
             config,
@@ -29,7 +33,9 @@ impl FrameAnalyzer {
             fft_output,
             magnitudes: Vec::new(),
             pitch_analyzer: PitchAnalyzer::new(),
+            formant_analyzer,
             window,
+            bin_hz,
         }
     }
 
@@ -55,7 +61,6 @@ impl FrameAnalyzer {
         let rms = energy.sqrt();
         let zcr = zero_crossing_rate(frame);
 
-        let bin_hz = self.config.sample_rate as f32 / self.config.frame_size as f32;
         self.magnitudes.resize(self.fft_output.len(), 0.0);
         let mut magnitude_sum = 0.0_f32;
         let mut weighted_sum = 0.0_f32;
@@ -69,7 +74,7 @@ impl FrameAnalyzer {
                 .max(1.0e-12);
             self.magnitudes[index] = magnitude;
             let power = magnitude * magnitude;
-            let hz = index as f32 * bin_hz;
+            let hz = index as f32 * self.bin_hz;
             magnitude_sum += magnitude;
             power_sum += power;
             weighted_sum += hz * magnitude;
@@ -86,8 +91,9 @@ impl FrameAnalyzer {
         let threshold = magnitude_sum * self.config.rolloff_ratio.clamp(0.0, 1.0);
         let mut cumulative = 0.0_f32;
         for (index, magnitude) in self.magnitudes.iter().copied().enumerate() {
-            let hz = index as f32 * bin_hz;
-            bandwidth_sum += magnitude * (hz - centroid).powi(2);
+            let hz = index as f32 * self.bin_hz;
+            let diff = hz - centroid;
+            bandwidth_sum += magnitude * diff * diff;
             cumulative += magnitude;
             if rolloff_hz == 0.0 && cumulative >= threshold {
                 rolloff_hz = hz;
@@ -117,7 +123,7 @@ impl FrameAnalyzer {
         let pitch_hz = pitch.map(|estimate| estimate.hz);
         let hnr_db = estimate_hnr_db(pitch.map(|estimate| estimate.periodicity).unwrap_or(0.0));
         let [formant_1_hz, formant_2_hz, formant_3_hz, _formant_4_hz] =
-            estimate_formants(frame, self.config.sample_rate, pitch_hz);
+            self.formant_analyzer.estimate_formants(frame, pitch_hz);
 
         FrameFeatures {
             pitch_hz,
@@ -128,7 +134,7 @@ impl FrameAnalyzer {
             spectral_rolloff_hz: if rolloff_hz > 0.0 {
                 rolloff_hz
             } else {
-                self.fft_output.len().saturating_sub(1) as f32 * bin_hz
+                self.fft_output.len().saturating_sub(1) as f32 * self.bin_hz
             },
             spectral_centroid_hz: centroid,
             spectral_bandwidth_hz: bandwidth,

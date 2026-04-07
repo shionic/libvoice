@@ -15,6 +15,14 @@ pub(crate) struct PitchAnalyzer {
     cmndf: Vec<f32>,
 }
 
+#[derive(Debug)]
+pub(crate) struct FormantAnalyzer {
+    effective_sample_rate: u32,
+    downsample: usize,
+    reduced: Vec<f32>,
+    window: Vec<f32>,
+}
+
 impl PitchAnalyzer {
     pub(crate) fn new() -> Self {
         Self::default()
@@ -37,15 +45,12 @@ impl PitchAnalyzer {
         }
 
         self.centered.resize(reduced_len, 0.0);
-        let mut reduced_sum = 0.0_f32;
-        for (index, chunk) in frame.chunks_exact(downsample).take(reduced_len).enumerate() {
-            let sample = chunk.iter().copied().sum::<f32>() / downsample as f32;
-            self.centered[index] = sample;
-            reduced_sum += sample;
-        }
+        let reduced = &mut self.centered[..reduced_len];
+        fill_downsampled(frame, downsample, reduced);
+        let reduced_sum: f32 = reduced.iter().copied().sum();
 
         let mean = reduced_sum / reduced_len as f32;
-        for sample in &mut self.centered[..reduced_len] {
+        for sample in reduced {
             *sample -= mean;
         }
 
@@ -134,6 +139,102 @@ impl PitchAnalyzer {
     }
 }
 
+impl FormantAnalyzer {
+    pub(crate) fn new(sample_rate: u32, frame_size: usize) -> Self {
+        const TARGET_SAMPLE_RATE: u32 = 16_000;
+
+        let downsample = (sample_rate / TARGET_SAMPLE_RATE).max(1) as usize;
+        let reduced_len = frame_size / downsample;
+
+        Self {
+            effective_sample_rate: sample_rate / downsample as u32,
+            downsample,
+            reduced: vec![0.0; reduced_len],
+            window: hamming_window(reduced_len),
+        }
+    }
+
+    pub(crate) fn estimate_formants(
+        &mut self,
+        frame: &[f32],
+        pitch_hz: Option<f32>,
+    ) -> [Option<f32>; 4] {
+        const LPC_ORDER: usize = 12;
+        const PRE_EMPHASIS: f32 = 0.94;
+        const MIN_FORMANT_HZ: f32 = 200.0;
+        const MAX_FORMANT_HZ: f32 = 5_000.0;
+        const MIN_BANDWIDTH_HZ: f32 = 20.0;
+        const MAX_BANDWIDTH_HZ: f32 = 800.0;
+
+        if frame.len() < LPC_ORDER + 2 {
+            return [None, None, None, None];
+        }
+
+        let reduced_len = frame.len() / self.downsample;
+        if reduced_len <= LPC_ORDER + 1 {
+            return [None, None, None, None];
+        }
+
+        if self.reduced.len() != reduced_len {
+            self.reduced.resize(reduced_len, 0.0);
+            self.window = hamming_window(reduced_len);
+        }
+
+        let reduced = &mut self.reduced[..reduced_len];
+        fill_downsampled(frame, self.downsample, reduced);
+        apply_pre_emphasis(reduced, PRE_EMPHASIS);
+        apply_window(reduced, &self.window);
+
+        let coefficients = match lpc_coefficients(reduced, LPC_ORDER) {
+            Some(coefficients) => coefficients,
+            None => return [None, None, None, None],
+        };
+
+        let polynomial = coefficients
+            .iter()
+            .rev()
+            .map(|&coefficient| coefficient as f64)
+            .collect::<Vec<_>>();
+        let mut roots = polynomial_roots(&polynomial);
+        roots.retain(|root| root.im >= 0.01);
+
+        let max_formant_hz = MAX_FORMANT_HZ.min(self.effective_sample_rate as f32 * 0.5);
+        let pitch_guard_hz = pitch_hz
+            .map(|pitch| (pitch * 2.0).max(MIN_FORMANT_HZ))
+            .unwrap_or(MIN_FORMANT_HZ);
+        let mut formants = roots
+            .into_iter()
+            .filter_map(|root| {
+                let radius = root.norm() as f32;
+                if !radius.is_finite() || radius <= 1.0e-6 {
+                    return None;
+                }
+
+                let frequency_hz =
+                    root.arg() as f32 * self.effective_sample_rate as f32 / (2.0 * PI);
+                let bandwidth_hz = -(self.effective_sample_rate as f32 / PI) * radius.ln();
+
+                let valid_frequency = frequency_hz > pitch_guard_hz && frequency_hz < max_formant_hz;
+                let valid_bandwidth =
+                    bandwidth_hz > MIN_BANDWIDTH_HZ && bandwidth_hz < MAX_BANDWIDTH_HZ;
+                if valid_frequency && valid_bandwidth {
+                    Some(frequency_hz)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        formants.sort_by(|left, right| left.total_cmp(right));
+
+        let mut detected = [None, None, None, None];
+        for (slot, hz) in detected.iter_mut().zip(formants.into_iter()) {
+            *slot = Some(hz);
+        }
+        detected
+    }
+}
+
 pub(crate) fn hann_window(size: usize) -> Vec<f32> {
     (0..size)
         .map(|index| 0.5 - 0.5 * (2.0 * PI * index as f32 / size as f32).cos())
@@ -163,86 +264,6 @@ pub(crate) fn estimate_hnr_db(periodicity: f32) -> f32 {
     }
     let harmonicity = periodicity.clamp(1.0e-6, 0.999);
     10.0 * (harmonicity / (1.0 - harmonicity)).log10()
-}
-
-pub(crate) fn estimate_formants(
-    frame: &[f32],
-    sample_rate: u32,
-    pitch_hz: Option<f32>,
-) -> [Option<f32>; 4] {
-    const TARGET_SAMPLE_RATE: u32 = 16_000;
-    const LPC_ORDER: usize = 12;
-    const PRE_EMPHASIS: f32 = 0.94;
-    const MIN_FORMANT_HZ: f32 = 200.0;
-    const MAX_FORMANT_HZ: f32 = 5_000.0;
-    const MIN_BANDWIDTH_HZ: f32 = 20.0;
-    const MAX_BANDWIDTH_HZ: f32 = 800.0;
-
-    if frame.len() < LPC_ORDER + 2 || sample_rate == 0 {
-        return [None, None, None, None];
-    }
-
-    let downsample = (sample_rate / TARGET_SAMPLE_RATE).max(1) as usize;
-    let reduced_len = frame.len() / downsample;
-    if reduced_len <= LPC_ORDER + 1 {
-        return [None, None, None, None];
-    }
-
-    let effective_sample_rate = sample_rate / downsample as u32;
-    let mut reduced = Vec::with_capacity(reduced_len);
-    for chunk in frame.chunks_exact(downsample).take(reduced_len) {
-        reduced.push(chunk.iter().copied().sum::<f32>() / downsample as f32);
-    }
-
-    apply_pre_emphasis(&mut reduced, PRE_EMPHASIS);
-    apply_hamming_window(&mut reduced);
-
-    let coefficients = match lpc_coefficients(&reduced, LPC_ORDER) {
-        Some(coefficients) => coefficients,
-        None => return [None, None, None, None],
-    };
-
-    let polynomial = coefficients
-        .iter()
-        .rev()
-        .map(|&coefficient| coefficient as f64)
-        .collect::<Vec<_>>();
-    let mut roots = polynomial_roots(&polynomial);
-    roots.retain(|root| root.im >= 0.01);
-
-    let max_formant_hz = MAX_FORMANT_HZ.min(effective_sample_rate as f32 * 0.5);
-    let pitch_guard_hz = pitch_hz
-        .map(|pitch| (pitch * 2.0).max(MIN_FORMANT_HZ))
-        .unwrap_or(MIN_FORMANT_HZ);
-    let mut formants = roots
-        .into_iter()
-        .filter_map(|root| {
-            let radius = root.norm() as f32;
-            if !radius.is_finite() || radius <= 1.0e-6 {
-                return None;
-            }
-
-            let frequency_hz = root.arg() as f32 * effective_sample_rate as f32 / (2.0 * PI);
-            let bandwidth_hz = -(effective_sample_rate as f32 / PI) * radius.ln();
-
-            let valid_frequency = frequency_hz > pitch_guard_hz && frequency_hz < max_formant_hz;
-            let valid_bandwidth =
-                bandwidth_hz > MIN_BANDWIDTH_HZ && bandwidth_hz < MAX_BANDWIDTH_HZ;
-            if valid_frequency && valid_bandwidth {
-                Some(frequency_hz)
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<_>>();
-
-    formants.sort_by(|left, right| left.total_cmp(right));
-
-    let mut detected = [None, None, None, None];
-    for (slot, hz) in detected.iter_mut().zip(formants.into_iter()) {
-        *slot = Some(hz);
-    }
-    detected
 }
 
 fn parabolic_refine(index: usize, values: &[f32]) -> f32 {
@@ -297,16 +318,52 @@ fn apply_pre_emphasis(signal: &mut [f32], coefficient: f32) {
     }
 }
 
-fn apply_hamming_window(signal: &mut [f32]) {
-    let len = signal.len();
+fn hamming_window(len: usize) -> Vec<f32> {
     if len < 2 {
-        return;
+        return vec![1.0; len];
     }
 
-    for (index, sample) in signal.iter_mut().enumerate() {
-        let phase = 2.0 * PI * index as f32 / (len - 1) as f32;
-        let window = 0.54 - 0.46 * phase.cos();
-        *sample *= window;
+    (0..len)
+        .map(|index| {
+            let phase = 2.0 * PI * index as f32 / (len - 1) as f32;
+            0.54 - 0.46 * phase.cos()
+        })
+        .collect()
+}
+
+fn apply_window(signal: &mut [f32], window: &[f32]) {
+    debug_assert_eq!(signal.len(), window.len());
+
+    for (sample, factor) in signal.iter_mut().zip(window.iter().copied()) {
+        *sample *= factor;
+    }
+}
+
+fn fill_downsampled(frame: &[f32], downsample: usize, output: &mut [f32]) {
+    match downsample {
+        1 => output.copy_from_slice(&frame[..output.len()]),
+        2 => {
+            for (chunk, slot) in frame.chunks_exact(2).zip(output.iter_mut()) {
+                *slot = (chunk[0] + chunk[1]) * 0.5;
+            }
+        }
+        3 => {
+            for (chunk, slot) in frame.chunks_exact(3).zip(output.iter_mut()) {
+                *slot = (chunk[0] + chunk[1] + chunk[2]) * (1.0 / 3.0);
+            }
+        }
+        4 => {
+            for (chunk, slot) in frame.chunks_exact(4).zip(output.iter_mut()) {
+                *slot = (chunk[0] + chunk[1] + chunk[2] + chunk[3]) * 0.25;
+            }
+        }
+        _ => {
+            let scale = 1.0 / downsample as f32;
+            for (chunk, slot) in frame.chunks_exact(downsample).zip(output.iter_mut()) {
+                let sum: f32 = chunk.iter().copied().sum();
+                *slot = sum * scale;
+            }
+        }
     }
 }
 
