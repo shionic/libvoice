@@ -601,25 +601,10 @@ fn summarize_partial_overall(
         processed_samples,
         frame_count: frames.len(),
         pitch_hz: summarize_optional_stats(frames.iter().filter_map(|frame| frame.pitch_hz)),
-        formants: summarize_formants(frames),
         spectral: summarize_spectral(frames),
         energy: summarize_required_stats(frames.iter().map(|frame| frame.energy)),
         jitter: None,
     }
-}
-
-fn summarize_formants(frames: &[FrameAnalysis]) -> Option<libvoice::FormantSummary> {
-    let f1_hz = summarize_optional_stats(frames.iter().filter_map(|frame| frame.formant_1_hz))?;
-    let f2_hz = summarize_optional_stats(frames.iter().filter_map(|frame| frame.formant_2_hz))?;
-    let f3_hz = summarize_optional_stats(frames.iter().filter_map(|frame| frame.formant_3_hz))?;
-    let f4_hz = summarize_optional_stats(frames.iter().filter_map(|frame| frame.formant_4_hz))?;
-
-    Some(libvoice::FormantSummary {
-        f1_hz,
-        f2_hz,
-        f3_hz,
-        f4_hz,
-    })
 }
 
 fn summarize_spectral(frames: &[FrameAnalysis]) -> Option<libvoice::SpectralSummary> {

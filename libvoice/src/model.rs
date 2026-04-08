@@ -25,14 +25,6 @@ pub struct SpectralSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct FormantSummary {
-    pub f1_hz: SummaryStats,
-    pub f2_hz: SummaryStats,
-    pub f3_hz: SummaryStats,
-    pub f4_hz: SummaryStats,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct JitterMetrics {
     pub sample_count: usize,
     pub local_ratio: f32,
@@ -56,7 +48,6 @@ pub struct ChunkAnalysis {
     pub input_samples: usize,
     pub frame_count: usize,
     pub pitch_hz: Option<SummaryStats>,
-    pub formants: Option<FormantSummary>,
     pub spectral: Option<SpectralSummary>,
     pub energy: Option<SummaryStats>,
     pub jitter: Option<JitterMetrics>,
@@ -67,7 +58,6 @@ pub struct OverallAnalysis {
     pub processed_samples: usize,
     pub frame_count: usize,
     pub pitch_hz: Option<SummaryStats>,
-    pub formants: Option<FormantSummary>,
     pub spectral: Option<SpectralSummary>,
     pub energy: Option<SummaryStats>,
     pub jitter: Option<JitterMetrics>,
@@ -88,10 +78,6 @@ pub struct FrameAnalysis {
     pub end_sample: usize,
     pub end_seconds: f32,
     pub pitch_hz: Option<f32>,
-    pub formant_1_hz: Option<f32>,
-    pub formant_2_hz: Option<f32>,
-    pub formant_3_hz: Option<f32>,
-    pub formant_4_hz: Option<f32>,
     pub pitch_clarity: f32,
     pub spectral_rolloff_hz: f32,
     pub spectral_centroid_hz: f32,
@@ -106,10 +92,6 @@ pub struct FrameAnalysis {
 #[derive(Debug, Clone)]
 pub(crate) struct FrameFeatures {
     pub(crate) pitch_hz: Option<f32>,
-    pub(crate) formant_1_hz: Option<f32>,
-    pub(crate) formant_2_hz: Option<f32>,
-    pub(crate) formant_3_hz: Option<f32>,
-    pub(crate) formant_4_hz: Option<f32>,
     pub(crate) pitch_clarity: f32,
     pub(crate) spectral_rolloff_hz: f32,
     pub(crate) spectral_centroid_hz: f32,

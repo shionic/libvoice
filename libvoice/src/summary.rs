@@ -1,6 +1,4 @@
-use crate::model::{
-    ChunkAnalysis, FormantSummary, FrameFeatures, OverallAnalysis, SpectralSummary,
-};
+use crate::model::{ChunkAnalysis, FrameFeatures, OverallAnalysis, SpectralSummary};
 use crate::stats::{summarize_optional, summarize_required};
 
 pub(crate) fn summarize_chunk(
@@ -14,7 +12,6 @@ pub(crate) fn summarize_chunk(
         input_samples,
         frame_count: frames.len(),
         pitch_hz: summarize_optional(summarized_pitch_values(frames).into_iter()),
-        formants: summarize_formants(frames),
         spectral: summarize_spectral(frames),
         energy: summarize_required(frames.iter().map(|f| f.energy)),
         jitter: None,
@@ -30,25 +27,10 @@ pub(crate) fn summarize_overall(
         processed_samples,
         frame_count: frames.len(),
         pitch_hz: summarize_optional(summarized_pitch_values(frames).into_iter()),
-        formants: summarize_formants(frames),
         spectral: summarize_spectral(frames),
         energy: summarize_required(frames.iter().map(|f| f.energy)),
         jitter: None,
     }
-}
-
-fn summarize_formants(frames: &[FrameFeatures]) -> Option<FormantSummary> {
-    let f1_hz = summarize_optional(frames.iter().filter_map(|f| f.formant_1_hz))?;
-    let f2_hz = summarize_optional(frames.iter().filter_map(|f| f.formant_2_hz))?;
-    let f3_hz = summarize_optional(frames.iter().filter_map(|f| f.formant_3_hz))?;
-    let f4_hz = summarize_optional(frames.iter().filter_map(|f| f.formant_4_hz))?;
-
-    Some(FormantSummary {
-        f1_hz,
-        f2_hz,
-        f3_hz,
-        f4_hz,
-    })
 }
 
 fn summarize_spectral(frames: &[FrameFeatures]) -> Option<SpectralSummary> {

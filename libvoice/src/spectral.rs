@@ -1,6 +1,6 @@
 use crate::config::AnalyzerConfig;
 use crate::model::FrameFeatures;
-use crate::signal::{FormantAnalyzer, PitchAnalyzer, estimate_hnr_db, zero_crossing_rate};
+use crate::signal::{PitchAnalyzer, estimate_hnr_db, zero_crossing_rate};
 use realfft::{RealFftPlanner, RealToComplex};
 use rustfft::num_complex::Complex32;
 use std::sync::Arc;
@@ -12,7 +12,6 @@ pub(crate) struct FrameAnalyzer {
     fft_output: Vec<Complex32>,
     magnitudes: Vec<f32>,
     pitch_analyzer: PitchAnalyzer,
-    formant_analyzer: FormantAnalyzer,
     window: Vec<f32>,
     bin_hz: f32,
 }
@@ -23,7 +22,6 @@ impl FrameAnalyzer {
         let fft = planner.plan_fft_forward(config.frame_size);
         let fft_input = fft.make_input_vec();
         let fft_output = fft.make_output_vec();
-        let formant_analyzer = FormantAnalyzer::new(config.sample_rate, config.frame_size);
         let bin_hz = config.sample_rate as f32 / config.frame_size as f32;
 
         Self {
@@ -33,7 +31,6 @@ impl FrameAnalyzer {
             fft_output,
             magnitudes: Vec::new(),
             pitch_analyzer: PitchAnalyzer::new(),
-            formant_analyzer,
             window,
             bin_hz,
         }
@@ -122,15 +119,8 @@ impl FrameAnalyzer {
         );
         let pitch_hz = pitch.map(|estimate| estimate.hz);
         let hnr_db = estimate_hnr_db(pitch.map(|estimate| estimate.periodicity).unwrap_or(0.0));
-        let [formant_1_hz, formant_2_hz, formant_3_hz, formant_4_hz] =
-            self.formant_analyzer.estimate_formants(frame, pitch_hz);
-
         FrameFeatures {
             pitch_hz,
-            formant_1_hz,
-            formant_2_hz,
-            formant_3_hz,
-            formant_4_hz,
             pitch_clarity: pitch.map(|estimate| estimate.clarity).unwrap_or(0.0),
             spectral_rolloff_hz: if rolloff_hz > 0.0 {
                 rolloff_hz

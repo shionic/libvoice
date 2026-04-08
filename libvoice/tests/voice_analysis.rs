@@ -24,49 +24,6 @@ fn synth_noise(sample_rate: u32, seconds: f32, amplitude: f32) -> Vec<f32> {
         .collect()
 }
 
-fn synth_vowel_like(
-    sample_rate: u32,
-    pitch_hz: f32,
-    seconds: f32,
-    formants: &[(f32, f32)],
-) -> Vec<f32> {
-    let total = (sample_rate as f32 * seconds) as usize;
-    let period = (sample_rate as f32 / pitch_hz).round().max(1.0) as usize;
-    let mut samples = vec![0.0_f32; total];
-
-    for index in (0..total).step_by(period) {
-        samples[index] = 1.0;
-    }
-
-    for &(frequency_hz, bandwidth_hz) in formants {
-        let radius = (-PI * bandwidth_hz / sample_rate as f32).exp();
-        let angle = 2.0 * PI * frequency_hz / sample_rate as f32;
-        let feedback_1 = 2.0 * radius * angle.cos();
-        let feedback_2 = -(radius * radius);
-        let mut y1 = 0.0_f32;
-        let mut y2 = 0.0_f32;
-
-        for sample in &mut samples {
-            let output = *sample + feedback_1 * y1 + feedback_2 * y2;
-            y2 = y1;
-            y1 = output;
-            *sample = output;
-        }
-    }
-
-    let peak = samples
-        .iter()
-        .copied()
-        .fold(0.0_f32, |acc, sample| acc.max(sample.abs()));
-    if peak > 0.0 {
-        for sample in &mut samples {
-            *sample = *sample * 0.5 / peak;
-        }
-    }
-
-    samples
-}
-
 fn approx_eq(left: f32, right: f32, tolerance: f32) {
     assert!(
         (left - right).abs() <= tolerance,
@@ -108,16 +65,6 @@ fn assert_reports_close(full: &AnalysisReport, streamed: &AnalysisReport) {
         streamed_spectral.bandwidth_hz.mean,
         0.01,
     );
-
-    match (&full.overall.formants, &streamed.overall.formants) {
-        (Some(full_formants), Some(streamed_formants)) => {
-            approx_eq(full_formants.f1_hz.mean, streamed_formants.f1_hz.mean, 0.01);
-            approx_eq(full_formants.f2_hz.mean, streamed_formants.f2_hz.mean, 0.01);
-            approx_eq(full_formants.f3_hz.mean, streamed_formants.f3_hz.mean, 0.01);
-        }
-        (None, None) => {}
-        _ => panic!("formant summaries diverged between full and streamed analysis"),
-    }
 }
 
 #[test]
@@ -290,37 +237,6 @@ fn voiced_sine_produces_concentrated_spectral_summary() {
 }
 
 #[test]
-fn voiced_signal_produces_stable_formant_summary() {
-    let sample_rate = 16_000;
-    let config = AnalyzerConfig::new(sample_rate);
-    let samples = synth_sine(sample_rate, 220.0, 1.0, 0.5);
-
-    let report = VoiceAnalyzer::analyze_buffer(config, &samples);
-    if let Some(formants) = report.overall.formants {
-        assert!(formants.f1_hz.mean < formants.f2_hz.mean);
-        assert!(formants.f2_hz.mean < formants.f3_hz.mean);
-    }
-}
-
-#[test]
-fn voiced_vowel_tracks_low_first_formant() {
-    let sample_rate = 16_000;
-    let config = AnalyzerConfig::new(sample_rate);
-    let samples = synth_vowel_like(
-        sample_rate,
-        250.0,
-        1.5,
-        &[(300.0, 80.0), (2_300.0, 120.0), (3_000.0, 150.0)],
-    );
-
-    let report = VoiceAnalyzer::analyze_buffer(config, &samples);
-    if let Some(formants) = report.overall.formants {
-        approx_eq(formants.f1_hz.mean, 300.0, 220.0);
-        assert!(formants.f1_hz.mean < formants.f2_hz.mean);
-    }
-}
-
-#[test]
 fn report_serializes_to_json() {
     let sample_rate = 16_000;
     let samples = synth_sine(sample_rate, 220.0, 0.5, 0.5);
@@ -331,5 +247,4 @@ fn report_serializes_to_json() {
     assert!(json.contains("\"overall\""));
     assert!(json.contains("\"chunks\""));
     assert!(json.contains("\"spectral\""));
-    assert!(json.contains("\"formants\""));
 }
