@@ -199,7 +199,7 @@ fn normalized_autocorrelation(signal: &[f32], lag: usize) -> f32 {
     }
 }
 
-fn fill_downsampled(frame: &[f32], downsample: usize, output: &mut [f32]) {
+pub(crate) fn fill_downsampled(frame: &[f32], downsample: usize, output: &mut [f32]) {
     match downsample {
         1 => output.copy_from_slice(&frame[..output.len()]),
         2 => {

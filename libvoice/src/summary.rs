@@ -1,4 +1,6 @@
-use crate::model::{ChunkAnalysis, FrameFeatures, OverallAnalysis, SpectralSummary};
+use crate::model::{
+    ChunkAnalysis, FormantStats, FormantSummary, FrameFeatures, OverallAnalysis, SpectralSummary,
+};
 use crate::stats::{summarize_optional, summarize_required};
 
 pub(crate) fn summarize_chunk(
@@ -13,6 +15,7 @@ pub(crate) fn summarize_chunk(
         frame_count: frames.len(),
         pitch_hz: summarize_optional(summarized_pitch_values(frames).into_iter()),
         spectral: summarize_spectral(frames),
+        formants: summarize_formants(frames),
         energy: summarize_required(frames.iter().map(|f| f.energy)),
         jitter: None,
     }
@@ -28,6 +31,7 @@ pub(crate) fn summarize_overall(
         frame_count: frames.len(),
         pitch_hz: summarize_optional(summarized_pitch_values(frames).into_iter()),
         spectral: summarize_spectral(frames),
+        formants: summarize_formants(frames),
         energy: summarize_required(frames.iter().map(|f| f.energy)),
         jitter: None,
     }
@@ -46,6 +50,39 @@ fn summarize_spectral(frames: &[FrameFeatures]) -> Option<SpectralSummary> {
         zcr: summarize_required(frames.iter().map(|f| f.zcr)).unwrap(),
         rms: summarize_required(frames.iter().map(|f| f.rms)).unwrap(),
         hnr_db: summarize_required(frames.iter().map(|f| f.hnr_db)).unwrap(),
+    })
+}
+
+fn summarize_formants(frames: &[FrameFeatures]) -> Option<FormantSummary> {
+    let f1 = summarize_formant_slot(frames, 0);
+    let f2 = summarize_formant_slot(frames, 1);
+    let f3 = summarize_formant_slot(frames, 2);
+    let f4 = summarize_formant_slot(frames, 3);
+
+    if f1.is_none() && f2.is_none() && f3.is_none() && f4.is_none() {
+        None
+    } else {
+        Some(FormantSummary { f1, f2, f3, f4 })
+    }
+}
+
+fn summarize_formant_slot(frames: &[FrameFeatures], index: usize) -> Option<FormantStats> {
+    let frequency_hz = summarize_optional(frames.iter().filter_map(|frame| {
+        frame
+            .formants
+            .get(index)
+            .map(|formant| formant.frequency_hz)
+    }))?;
+    let bandwidth_hz = summarize_optional(frames.iter().filter_map(|frame| {
+        frame
+            .formants
+            .get(index)
+            .map(|formant| formant.bandwidth_hz)
+    }))?;
+
+    Some(FormantStats {
+        frequency_hz,
+        bandwidth_hz,
     })
 }
 

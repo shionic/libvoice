@@ -58,6 +58,10 @@ struct AnalyzeQuery {
     voiced_rms_threshold: Option<f32>,
     voiced_max_spectral_flatness: Option<f32>,
     voiced_max_zero_crossing_rate: Option<f32>,
+    max_formants: Option<usize>,
+    formant_max_frequency_hz: Option<f32>,
+    formant_max_bandwidth_hz: Option<f32>,
+    formant_pre_emphasis_hz: Option<f32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -324,6 +328,18 @@ fn build_config(sample_rate: u32, query: &AnalyzeQuery) -> Result<AnalyzerConfig
     if let Some(voiced_max_zero_crossing_rate) = query.voiced_max_zero_crossing_rate {
         config.voiced_max_zero_crossing_rate = voiced_max_zero_crossing_rate;
     }
+    if let Some(max_formants) = query.max_formants {
+        config.max_formants = max_formants;
+    }
+    if let Some(formant_max_frequency_hz) = query.formant_max_frequency_hz {
+        config.formant_max_frequency_hz = formant_max_frequency_hz;
+    }
+    if let Some(formant_max_bandwidth_hz) = query.formant_max_bandwidth_hz {
+        config.formant_max_bandwidth_hz = formant_max_bandwidth_hz;
+    }
+    if let Some(formant_pre_emphasis_hz) = query.formant_pre_emphasis_hz {
+        config.formant_pre_emphasis_hz = formant_pre_emphasis_hz;
+    }
 
     if config.min_pitch_hz <= 0.0 || config.max_pitch_hz <= 0.0 {
         return Err(bad_request("pitch bounds must be greater than 0"));
@@ -337,6 +353,9 @@ fn build_config(sample_rate: u32, query: &AnalyzeQuery) -> Result<AnalyzerConfig
         return Err(bad_request(
             "`hop_size` must be less than or equal to `frame_size`",
         ));
+    }
+    if config.max_formants == 0 {
+        return Err(bad_request("`max_formants` must be greater than 0"));
     }
 
     Ok(config)
@@ -602,6 +621,7 @@ fn summarize_partial_overall(
         frame_count: frames.len(),
         pitch_hz: summarize_optional_stats(frames.iter().filter_map(|frame| frame.pitch_hz)),
         spectral: summarize_spectral(frames),
+        formants: summarize_formants(frames),
         energy: summarize_required_stats(frames.iter().map(|frame| frame.energy)),
         jitter: None,
     }
@@ -631,6 +651,40 @@ fn summarize_spectral(frames: &[FrameAnalysis]) -> Option<libvoice::SpectralSumm
             .expect("non-empty frames must produce rms stats"),
         hnr_db: summarize_required_stats(frames.iter().map(|frame| frame.hnr_db))
             .expect("non-empty frames must produce hnr stats"),
+    })
+}
+
+fn summarize_formants(frames: &[FrameAnalysis]) -> Option<libvoice::FormantSummary> {
+    let f1 = summarize_formant_slot(frames, 0);
+    let f2 = summarize_formant_slot(frames, 1);
+    let f3 = summarize_formant_slot(frames, 2);
+    let f4 = summarize_formant_slot(frames, 3);
+
+    if f1.is_none() && f2.is_none() && f3.is_none() && f4.is_none() {
+        None
+    } else {
+        Some(libvoice::FormantSummary { f1, f2, f3, f4 })
+    }
+}
+
+fn summarize_formant_slot(
+    frames: &[FrameAnalysis],
+    index: usize,
+) -> Option<libvoice::FormantStats> {
+    let frequency_hz = summarize_optional_stats(
+        frames
+            .iter()
+            .filter_map(|frame| frame.formants_hz.get(index).copied()),
+    )?;
+    let bandwidth_hz = summarize_optional_stats(
+        frames
+            .iter()
+            .filter_map(|frame| frame.formant_bandwidths_hz.get(index).copied()),
+    )?;
+
+    Some(libvoice::FormantStats {
+        frequency_hz,
+        bandwidth_hz,
     })
 }
 

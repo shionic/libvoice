@@ -1,5 +1,6 @@
 mod analyzer;
 mod config;
+mod formant;
 mod model;
 mod signal;
 mod spectral;
@@ -9,8 +10,8 @@ mod summary;
 pub use analyzer::VoiceAnalyzer;
 pub use config::AnalyzerConfig;
 pub use model::{
-    AnalysisReport, ChunkAnalysis, FrameAnalysis, JitterMetrics, OverallAnalysis, SpectralSummary,
-    SummaryStats,
+    AnalysisReport, ChunkAnalysis, FormantStats, FormantSummary, FrameAnalysis, JitterMetrics,
+    OverallAnalysis, SpectralSummary, SummaryStats,
 };
 
 #[cfg(test)]

@@ -1,6 +1,7 @@
 use clap::{Parser, ValueEnum};
 use libvoice::{
-    AnalysisReport, AnalyzerConfig, FrameAnalysis, SpectralSummary, SummaryStats, VoiceAnalyzer,
+    AnalysisReport, AnalyzerConfig, FormantSummary, FrameAnalysis, SpectralSummary, SummaryStats,
+    VoiceAnalyzer,
 };
 use rayon::prelude::*;
 use serde::Serialize;
@@ -542,6 +543,7 @@ fn format_text_report(output: &FileAnalysisOutput) -> String {
     format_optional_stats(&mut out, "Pitch (Hz)", overall.pitch_hz.as_ref());
     format_optional_stats(&mut out, "Energy (mean-square)", overall.energy.as_ref());
     format_optional_spectral(&mut out, overall.spectral.as_ref());
+    format_optional_formants(&mut out, overall.formants.as_ref());
     out
 }
 
@@ -658,6 +660,39 @@ fn format_optional_spectral(out: &mut String, spectral: Option<&SpectralSummary>
         }
         None => {
             writeln!(out, "Spectral: n/a").unwrap();
+        }
+    }
+}
+
+fn format_optional_formants(out: &mut String, formants: Option<&FormantSummary>) {
+    match formants {
+        Some(formants) => {
+            for (label, stats) in [
+                ("F1", formants.f1.as_ref()),
+                ("F2", formants.f2.as_ref()),
+                ("F3", formants.f3.as_ref()),
+                ("F4", formants.f4.as_ref()),
+            ] {
+                match stats {
+                    Some(stats) => {
+                        writeln!(
+                            out,
+                            "{label} (Hz): mean {}, std {}; bandwidth mean {}, std {}",
+                            format_value(stats.frequency_hz.mean),
+                            format_value(stats.frequency_hz.std),
+                            format_value(stats.bandwidth_hz.mean),
+                            format_value(stats.bandwidth_hz.std)
+                        )
+                        .unwrap();
+                    }
+                    None => {
+                        writeln!(out, "{label}: n/a").unwrap();
+                    }
+                }
+            }
+        }
+        None => {
+            writeln!(out, "Formants: n/a").unwrap();
         }
     }
 }

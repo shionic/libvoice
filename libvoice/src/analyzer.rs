@@ -157,6 +157,16 @@ impl VoiceAnalyzer {
             rms: features.rms,
             hnr_db: features.hnr_db,
             energy: features.energy,
+            formants_hz: features
+                .formants
+                .iter()
+                .map(|formant| formant.frequency_hz)
+                .collect(),
+            formant_bandwidths_hz: features
+                .formants
+                .iter()
+                .map(|formant| formant.bandwidth_hz)
+                .collect(),
         }
     }
 }

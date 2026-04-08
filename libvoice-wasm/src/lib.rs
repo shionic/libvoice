@@ -14,6 +14,10 @@ struct AnalyzerConfigPatch {
     voiced_rms_threshold: Option<f32>,
     voiced_max_spectral_flatness: Option<f32>,
     voiced_max_zero_crossing_rate: Option<f32>,
+    max_formants: Option<usize>,
+    formant_max_frequency_hz: Option<f32>,
+    formant_max_bandwidth_hz: Option<f32>,
+    formant_pre_emphasis_hz: Option<f32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -133,6 +137,18 @@ fn build_config(sample_rate: u32, options: Option<JsValue>) -> Result<AnalyzerCo
     if let Some(voiced_max_zero_crossing_rate) = patch.voiced_max_zero_crossing_rate {
         config.voiced_max_zero_crossing_rate = voiced_max_zero_crossing_rate;
     }
+    if let Some(max_formants) = patch.max_formants {
+        config.max_formants = max_formants;
+    }
+    if let Some(formant_max_frequency_hz) = patch.formant_max_frequency_hz {
+        config.formant_max_frequency_hz = formant_max_frequency_hz;
+    }
+    if let Some(formant_max_bandwidth_hz) = patch.formant_max_bandwidth_hz {
+        config.formant_max_bandwidth_hz = formant_max_bandwidth_hz;
+    }
+    if let Some(formant_pre_emphasis_hz) = patch.formant_pre_emphasis_hz {
+        config.formant_pre_emphasis_hz = formant_pre_emphasis_hz;
+    }
 
     if config.min_pitch_hz <= 0.0 || config.max_pitch_hz <= 0.0 {
         return Err(js_error("pitch bounds must be greater than 0"));
@@ -142,6 +158,9 @@ fn build_config(sample_rate: u32, options: Option<JsValue>) -> Result<AnalyzerCo
     }
     if config.hop_size > config.frame_size {
         return Err(js_error("hopSize must be less than or equal to frameSize"));
+    }
+    if config.max_formants == 0 {
+        return Err(js_error("maxFormants must be greater than 0"));
     }
 
     Ok(config)
