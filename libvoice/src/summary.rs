@@ -3,6 +3,18 @@ use crate::model::{
 };
 use crate::stats::{summarize_optional, summarize_required};
 
+pub(crate) fn empty_overall(processed_samples: usize) -> OverallAnalysis {
+    OverallAnalysis {
+        processed_samples,
+        frame_count: 0,
+        pitch_hz: None,
+        spectral: None,
+        formants: None,
+        energy: None,
+        jitter: None,
+    }
+}
+
 pub(crate) fn summarize_chunk(
     chunk_index: usize,
     input_samples: usize,
@@ -26,6 +38,10 @@ pub(crate) fn summarize_overall(
     frames: &[FrameFeatures],
     _frame_step_seconds: f32,
 ) -> OverallAnalysis {
+    if frames.is_empty() {
+        return empty_overall(processed_samples);
+    }
+
     OverallAnalysis {
         processed_samples,
         frame_count: frames.len(),

@@ -80,6 +80,7 @@ fn assert_reports_close(full: &AnalysisReport, streamed: &AnalysisReport) {
         full.overall.processed_samples,
         streamed.overall.processed_samples
     );
+    assert_eq!(full.frames.len(), streamed.frames.len());
 
     let full_pitch = full.overall.pitch_hz.as_ref().unwrap();
     let streamed_pitch = streamed.overall.pitch_hz.as_ref().unwrap();
@@ -166,6 +167,8 @@ fn streaming_can_return_frame_level_results() {
     assert!(frames[0].end_seconds > frames[0].start_seconds);
     assert!(frames[0].pitch_hz.is_some());
     assert!(frames[0].formants_hz.len() <= 4);
+    assert_eq!(frames[0].cumulative.frame_count, 1);
+    assert_eq!(frames.last().unwrap().cumulative, overall);
 }
 
 #[test]
@@ -190,6 +193,7 @@ fn streaming_accumulates_metrics_consistently_with_variable_chunk_sizes() {
 
     let actual = AnalysisReport {
         config: analyzer.config().clone(),
+        frames: Vec::new(),
         chunks: Vec::new(),
         overall: analyzer.finalize(),
     };
@@ -334,7 +338,31 @@ fn report_serializes_to_json() {
 
     let json = serde_json::to_string(&report).expect("report should serialize");
     assert!(json.contains("\"overall\""));
+    assert!(json.contains("\"frames\""));
     assert!(json.contains("\"chunks\""));
     assert!(json.contains("\"spectral\""));
     assert!(json.contains("\"formants\""));
+}
+
+#[test]
+fn report_exposes_frames_with_cumulative_statistics() {
+    let sample_rate = 16_000;
+    let samples = synth_sine(sample_rate, 220.0, 0.8, 0.5);
+    let report = VoiceAnalyzer::analyze_buffer(AnalyzerConfig::new(sample_rate), &samples);
+
+    assert_eq!(report.frames.len(), report.overall.frame_count);
+    assert!(!report.frames.is_empty());
+
+    let first = &report.frames[0];
+    assert_eq!(first.cumulative.frame_count, 1);
+    assert_eq!(
+        first.cumulative.pitch_hz.as_ref().unwrap().mean,
+        first.pitch_hz.unwrap()
+    );
+
+    let last = report.frames.last().unwrap();
+    assert_eq!(last.cumulative, report.overall);
+    assert!(last.cumulative.pitch_hz.as_ref().unwrap().median > 0.0);
+    assert!(last.cumulative.pitch_hz.as_ref().unwrap().p5 > 0.0);
+    assert!(last.cumulative.pitch_hz.as_ref().unwrap().p95 > 0.0);
 }

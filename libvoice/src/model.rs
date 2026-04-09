@@ -82,6 +82,7 @@ pub struct OverallAnalysis {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AnalysisReport {
     pub config: AnalyzerConfig,
+    pub frames: Vec<FrameAnalysis>,
     pub chunks: Vec<ChunkAnalysis>,
     pub overall: OverallAnalysis,
 }
@@ -105,6 +106,7 @@ pub struct FrameAnalysis {
     pub energy: f32,
     pub formants_hz: Vec<f32>,
     pub formant_bandwidths_hz: Vec<f32>,
+    pub cumulative: OverallAnalysis,
 }
 
 #[derive(Debug, Clone)]

@@ -59,8 +59,14 @@ impl VoiceAnalyzer {
             if self.is_voiced_frame(&features) {
                 self.overall_frames.push(features.clone());
                 frame_features.push(features.clone());
-                frames.push(self.build_frame_analysis(frame_start_sample, features));
+                let cumulative =
+                    summarize_overall(frame_start_sample + self.config.frame_size, &self.overall_frames, 0.0);
+                frames.push(self.build_frame_analysis(frame_start_sample, features, cumulative));
             }
+        }
+
+        if let Some(last_frame) = frames.last_mut() {
+            last_frame.cumulative.processed_samples = self.processed_samples;
         }
 
         self.compact_pending();
@@ -84,10 +90,11 @@ impl VoiceAnalyzer {
 
     pub fn analyze_buffer(config: AnalyzerConfig, samples: &[f32]) -> AnalysisReport {
         let mut analyzer = Self::new(config);
-        let chunk = analyzer.process_chunk(samples);
+        let (chunk, frames) = analyzer.process_chunk_with_frames(samples);
         let overall = analyzer.finalize();
         AnalysisReport {
             config: analyzer.config.clone(),
+            frames,
             chunks: vec![chunk],
             overall,
         }
@@ -100,12 +107,16 @@ impl VoiceAnalyzer {
     ) -> AnalysisReport {
         let mut analyzer = Self::new(config);
         let mut chunks = Vec::new();
+        let mut frames = Vec::new();
         for piece in samples.chunks(input_chunk_size.max(1)) {
-            chunks.push(analyzer.process_chunk(piece));
+            let (chunk, chunk_frames) = analyzer.process_chunk_with_frames(piece);
+            chunks.push(chunk);
+            frames.extend(chunk_frames);
         }
         let overall = analyzer.finalize();
         AnalysisReport {
             config: analyzer.config.clone(),
+            frames,
             chunks,
             overall,
         }
@@ -134,6 +145,7 @@ impl VoiceAnalyzer {
         &mut self,
         frame_start_sample: usize,
         features: FrameFeatures,
+        cumulative: OverallAnalysis,
     ) -> FrameAnalysis {
         let frame_index = self.next_frame_index;
         self.next_frame_index += 1;
@@ -167,6 +179,7 @@ impl VoiceAnalyzer {
                 .iter()
                 .map(|formant| formant.bandwidth_hz)
                 .collect(),
+            cumulative,
         }
     }
 }

@@ -170,6 +170,7 @@ async fn analyze_handler(
         let (chunk, frames) = analyzer.process_chunk_with_frames(&decoded.samples);
         let report = AnalysisReport {
             config,
+            frames: frames.clone(),
             chunks: vec![chunk],
             overall: analyzer.finalize(),
         };
@@ -616,135 +617,21 @@ fn summarize_partial_overall(
     processed_samples: usize,
     frames: &[FrameAnalysis],
 ) -> OverallAnalysis {
+    if let Some(frame) = frames.last() {
+        let mut overall = frame.cumulative.clone();
+        overall.processed_samples = processed_samples;
+        return overall;
+    }
+
     OverallAnalysis {
         processed_samples,
-        frame_count: frames.len(),
-        pitch_hz: summarize_optional_stats(frames.iter().filter_map(|frame| frame.pitch_hz)),
-        spectral: summarize_spectral(frames),
-        formants: summarize_formants(frames),
-        energy: summarize_required_stats(frames.iter().map(|frame| frame.energy)),
+        frame_count: 0,
+        pitch_hz: None,
+        spectral: None,
+        formants: None,
+        energy: None,
         jitter: None,
     }
-}
-
-fn summarize_spectral(frames: &[FrameAnalysis]) -> Option<libvoice::SpectralSummary> {
-    if frames.is_empty() {
-        return None;
-    }
-
-    Some(libvoice::SpectralSummary {
-        rolloff_hz: summarize_required_stats(frames.iter().map(|frame| frame.spectral_rolloff_hz))
-            .expect("non-empty frames must produce rolloff stats"),
-        centroid_hz: summarize_required_stats(
-            frames.iter().map(|frame| frame.spectral_centroid_hz),
-        )
-        .expect("non-empty frames must produce centroid stats"),
-        bandwidth_hz: summarize_required_stats(
-            frames.iter().map(|frame| frame.spectral_bandwidth_hz),
-        )
-        .expect("non-empty frames must produce bandwidth stats"),
-        flatness: summarize_required_stats(frames.iter().map(|frame| frame.spectral_flatness))
-            .expect("non-empty frames must produce flatness stats"),
-        zcr: summarize_required_stats(frames.iter().map(|frame| frame.zcr))
-            .expect("non-empty frames must produce zcr stats"),
-        rms: summarize_required_stats(frames.iter().map(|frame| frame.rms))
-            .expect("non-empty frames must produce rms stats"),
-        hnr_db: summarize_required_stats(frames.iter().map(|frame| frame.hnr_db))
-            .expect("non-empty frames must produce hnr stats"),
-    })
-}
-
-fn summarize_formants(frames: &[FrameAnalysis]) -> Option<libvoice::FormantSummary> {
-    let f1 = summarize_formant_slot(frames, 0);
-    let f2 = summarize_formant_slot(frames, 1);
-    let f3 = summarize_formant_slot(frames, 2);
-    let f4 = summarize_formant_slot(frames, 3);
-
-    if f1.is_none() && f2.is_none() && f3.is_none() && f4.is_none() {
-        None
-    } else {
-        Some(libvoice::FormantSummary { f1, f2, f3, f4 })
-    }
-}
-
-fn summarize_formant_slot(
-    frames: &[FrameAnalysis],
-    index: usize,
-) -> Option<libvoice::FormantStats> {
-    let frequency_hz = summarize_optional_stats(
-        frames
-            .iter()
-            .filter_map(|frame| frame.formants_hz.get(index).copied()),
-    )?;
-    let bandwidth_hz = summarize_optional_stats(
-        frames
-            .iter()
-            .filter_map(|frame| frame.formant_bandwidths_hz.get(index).copied()),
-    )?;
-
-    Some(libvoice::FormantStats {
-        frequency_hz,
-        bandwidth_hz,
-    })
-}
-
-fn summarize_optional_stats<I>(values: I) -> Option<libvoice::SummaryStats>
-where
-    I: Iterator<Item = f32>,
-{
-    summarize_values(values.filter(|value| value.is_finite()).collect())
-}
-
-fn summarize_required_stats<I>(values: I) -> Option<libvoice::SummaryStats>
-where
-    I: Iterator<Item = f32>,
-{
-    summarize_values(values.filter(|value| value.is_finite()).collect())
-}
-
-fn summarize_values(mut values: Vec<f32>) -> Option<libvoice::SummaryStats> {
-    if values.is_empty() {
-        return None;
-    }
-
-    values.sort_by(|a, b| a.total_cmp(b));
-    let count = values.len();
-    let mean = values.iter().sum::<f32>() / count as f32;
-    let variance = values
-        .iter()
-        .map(|value| {
-            let delta = *value - mean;
-            delta * delta
-        })
-        .sum::<f32>()
-        / count as f32;
-
-    Some(libvoice::SummaryStats {
-        count,
-        mean,
-        std: variance.sqrt(),
-        median: percentile_sorted(&values, 0.5),
-        min: values[0],
-        max: values[count - 1],
-        p5: percentile_sorted(&values, 0.05),
-        p95: percentile_sorted(&values, 0.95),
-    })
-}
-
-fn percentile_sorted(values: &[f32], percentile: f32) -> f32 {
-    if values.len() == 1 {
-        return values[0];
-    }
-
-    let position = percentile.clamp(0.0, 1.0) * (values.len() - 1) as f32;
-    let lower = position.floor() as usize;
-    let upper = position.ceil() as usize;
-    if lower == upper {
-        return values[lower];
-    }
-
-    let weight = position - lower as f32;
-    values[lower] * (1.0 - weight) + values[upper] * weight
 }
 
 fn bad_request(message: impl Into<String>) -> ApiError {

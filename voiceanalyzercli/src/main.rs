@@ -59,9 +59,15 @@ struct Args {
 
     #[arg(long, default_value_t = 0.85)]
     rolloff_ratio: f32,
+
+    #[arg(long)]
+    frame_from: Option<usize>,
+
+    #[arg(long)]
+    frame_to: Option<usize>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct FileAnalysisOutput {
     path: PathBuf,
     backend: &'static str,
@@ -83,6 +89,10 @@ struct VoicedInterval {
 fn main() {
     let args = Args::parse();
 
+    if let Err(error) = validate_args(&args) {
+        exit_with_error(error);
+    }
+
     if let Err(error) = configure_thread_pool(args.threads) {
         exit_with_error(error);
     }
@@ -103,21 +113,26 @@ fn main() {
         }
     }
 
+    let filtered_outputs: Vec<_> = outputs
+        .iter()
+        .map(|output| filter_output_frames(output, &args))
+        .collect();
+
     match args.format {
         OutputFormat::Text => {
-            for (index, output) in outputs.iter().enumerate() {
+            for (index, output) in filtered_outputs.iter().enumerate() {
                 if index > 0 {
                     println!();
                 }
-                print!("{}", format_text_report(output));
+                print!("{}", format_text_report(output, &args));
             }
         }
         OutputFormat::Json => {
             let json = if failures.is_empty() {
-                serde_json::to_string_pretty(&outputs)
+                serde_json::to_string_pretty(&filtered_outputs)
             } else {
                 serde_json::to_string_pretty(&serde_json::json!({
-                    "files": outputs,
+                    "files": filtered_outputs,
                     "errors": failures,
                 }))
             };
@@ -130,7 +145,7 @@ fn main() {
         OutputFormat::FramesJson => {
             let payload = if failures.is_empty() {
                 serde_json::to_string_pretty(
-                    &outputs
+                    &filtered_outputs
                         .iter()
                         .map(|output| {
                             serde_json::json!({
@@ -146,7 +161,7 @@ fn main() {
                 )
             } else {
                 serde_json::to_string_pretty(&serde_json::json!({
-                    "files": outputs.iter().map(|output| serde_json::json!({
+                    "files": filtered_outputs.iter().map(|output| serde_json::json!({
                         "path": output.path,
                         "backend": output.backend,
                         "sample_rate": output.sample_rate,
@@ -212,6 +227,53 @@ fn main() {
         }
         std::process::exit(1);
     }
+}
+
+fn validate_args(args: &Args) -> Result<(), String> {
+    if let (Some(frame_from), Some(frame_to)) = (args.frame_from, args.frame_to) {
+        if frame_from != 0 && frame_to != 0 && frame_from > frame_to {
+            return Err("--frame-from must be less than or equal to --frame-to".to_string());
+        }
+    }
+
+    Ok(())
+}
+
+fn filter_output_frames(output: &FileAnalysisOutput, args: &Args) -> FileAnalysisOutput {
+    let mut filtered = output.clone();
+    let frames = select_frames(&output.voiced_frames, args.frame_from, args.frame_to)
+        .into_iter()
+        .cloned()
+        .collect::<Vec<_>>();
+
+    filtered.report.frames = frames.clone();
+    filtered.voiced_intervals = merge_voiced_intervals(&frames);
+    filtered.voiced_frames = frames;
+    filtered
+}
+
+fn select_frames<'a>(
+    frames: &'a [FrameAnalysis],
+    frame_from: Option<usize>,
+    frame_to: Option<usize>,
+) -> Vec<&'a FrameAnalysis> {
+    let (start, end) = resolved_frame_range(frame_from, frame_to);
+    frames
+        .iter()
+        .filter(|frame| frame.frame_index >= start && frame.frame_index <= end)
+        .collect()
+}
+
+fn resolved_frame_range(frame_from: Option<usize>, frame_to: Option<usize>) -> (usize, usize) {
+    let start = match frame_from {
+        Some(0) | None => 0,
+        Some(value) => value,
+    };
+    let end = match frame_to {
+        Some(0) | None => usize::MAX,
+        Some(value) => value,
+    };
+    (start, end)
 }
 
 fn configure_thread_pool(threads: Option<usize>) -> Result<(), String> {
@@ -342,6 +404,7 @@ fn analyze_file_with_symphonia(path: &Path, args: &Args) -> Result<FileAnalysisO
 
     let report = AnalysisReport {
         config: analyzer.config().clone(),
+        frames: voiced_frames.clone(),
         chunks,
         overall: analyzer.finalize(),
     };
@@ -427,6 +490,7 @@ fn analyze_file_with_ffmpeg(path: &Path, args: &Args) -> Result<FileAnalysisOutp
     let (chunk, voiced_frames) = analyzer.process_chunk_with_frames(&samples);
     let report = AnalysisReport {
         config: analyzer.config().clone(),
+        frames: voiced_frames.clone(),
         chunks: vec![chunk],
         overall: analyzer.finalize(),
     };
@@ -515,7 +579,7 @@ fn average_interleaved_channels_into(mono: &mut Vec<f32>, samples: &[f32], chann
     }
 }
 
-fn format_text_report(output: &FileAnalysisOutput) -> String {
+fn format_text_report(output: &FileAnalysisOutput, args: &Args) -> String {
     let mut out = String::new();
     let overall = &output.report.overall;
 
@@ -544,7 +608,101 @@ fn format_text_report(output: &FileAnalysisOutput) -> String {
     format_optional_stats(&mut out, "Energy (mean-square)", overall.energy.as_ref());
     format_optional_spectral(&mut out, overall.spectral.as_ref());
     format_optional_formants(&mut out, overall.formants.as_ref());
+    format_frame_slice(&mut out, &output.voiced_frames, args.frame_from, args.frame_to);
     out
+}
+
+fn format_frame_slice(
+    out: &mut String,
+    frames: &[FrameAnalysis],
+    frame_from: Option<usize>,
+    frame_to: Option<usize>,
+) {
+    if frame_from.is_none() && frame_to.is_none() {
+        return;
+    }
+
+    writeln!(
+        out,
+        "Frame range: {}..={}",
+        start_display(frame_from),
+        end_display(frame_to)
+    )
+    .unwrap();
+
+    let selected = select_frames(frames, frame_from, frame_to);
+
+    if selected.is_empty() {
+        writeln!(out, "Frames: none in requested range").unwrap();
+        return;
+    }
+
+    for frame in selected {
+        writeln!(
+            out,
+            "Frame {}: {:.3}-{:.3}s pitch {} clarity {} energy {} rms {} zcr {} rolloff {} centroid {} bandwidth {} flatness {} hnr {}",
+            frame.frame_index,
+            frame.start_seconds,
+            frame.end_seconds,
+            format_optional_value(frame.pitch_hz),
+            format_value(frame.pitch_clarity),
+            format_value(frame.energy),
+            format_value(frame.rms),
+            format_value(frame.zcr),
+            format_value(frame.spectral_rolloff_hz),
+            format_value(frame.spectral_centroid_hz),
+            format_value(frame.spectral_bandwidth_hz),
+            format_value(frame.spectral_flatness),
+            format_value(frame.hnr_db),
+        )
+        .unwrap();
+
+        if !frame.formants_hz.is_empty() {
+            writeln!(
+                out,
+                "  Formants Hz: {}",
+                format_series(&frame.formants_hz)
+            )
+            .unwrap();
+        }
+
+        if !frame.formant_bandwidths_hz.is_empty() {
+            writeln!(
+                out,
+                "  Formant bandwidths Hz: {}",
+                format_series(&frame.formant_bandwidths_hz)
+            )
+            .unwrap();
+        }
+    }
+}
+
+fn start_display(start: Option<usize>) -> String {
+    if matches!(start, None | Some(0)) {
+        "start".to_string()
+    } else {
+        start.unwrap().to_string()
+    }
+}
+
+fn end_display(end: Option<usize>) -> String {
+    if matches!(end, None | Some(0)) {
+        "end".to_string()
+    } else {
+        end.unwrap().to_string()
+    }
+}
+
+fn format_optional_value(value: Option<f32>) -> String {
+    value.map(format_value).unwrap_or_else(|| "n/a".to_string())
+}
+
+fn format_series(values: &[f32]) -> String {
+    values
+        .iter()
+        .map(|value| format_value(*value))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn merge_voiced_intervals(frames: &[FrameAnalysis]) -> Vec<VoicedInterval> {

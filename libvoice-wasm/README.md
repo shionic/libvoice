@@ -55,6 +55,9 @@ If `includeFrames` is `true`, the function returns:
 }
 ```
 
+`AnalysisReport` now also contains `frames`, and each `FrameAnalysis` contains a
+`cumulative` snapshot with running summary stats up to that voiced frame.
+
 ### Incremental analysis
 
 ```js
@@ -74,6 +77,10 @@ console.log(chunkResult.frames);
 const overall = analyzer.finalize();
 console.log(overall);
 ```
+
+Each frame in `chunkResult.frames` includes raw per-frame values plus
+`frame.cumulative`, which exposes running `mean`, `median`, `std`, `p5`, and
+`p95` summaries for pitch, spectral metrics, energy, and formants.
 
 ## Analyzer Options
 

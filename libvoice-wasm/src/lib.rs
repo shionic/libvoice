@@ -42,6 +42,7 @@ pub fn analyze_mono_f32(
         return to_js_value(&AnalyzeWithFrames {
             report: AnalysisReport {
                 config,
+                frames: frames.clone(),
                 chunks: vec![chunk],
                 overall: analyzer.finalize(),
             },

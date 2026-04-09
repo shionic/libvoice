@@ -147,7 +147,37 @@ curl \
       "spectral": { "...": "SpectralSummary" },
       "energy": { "...": "SummaryStats" },
       "jitter": null
-    }
+    },
+    "frames": [
+      {
+        "frame_index": 0,
+        "start_sample": 0,
+        "start_seconds": 0.0,
+        "end_sample": 2048,
+        "end_seconds": 0.128,
+        "pitch_hz": 219.6,
+        "pitch_clarity": 0.92,
+        "spectral_rolloff_hz": 312.5,
+        "spectral_centroid_hz": 236.1,
+        "spectral_bandwidth_hz": 88.4,
+        "spectral_flatness": 0.01,
+        "zcr": 0.03,
+        "rms": 0.35,
+        "hnr_db": 14.7,
+        "energy": 0.12,
+        "formants_hz": [],
+        "formant_bandwidths_hz": [],
+        "cumulative": {
+          "processed_samples": 2048,
+          "frame_count": 1,
+          "pitch_hz": { "...": "SummaryStats" },
+          "spectral": { "...": "SpectralSummary" },
+          "formants": null,
+          "energy": { "...": "SummaryStats" },
+          "jitter": null
+        }
+      }
+    ]
   },
   "frames": [
     {
@@ -165,13 +195,25 @@ curl \
       "zcr": 0.03,
       "rms": 0.35,
       "hnr_db": 14.7,
-      "energy": 0.12
+      "energy": 0.12,
+      "formants_hz": [],
+      "formant_bandwidths_hz": [],
+      "cumulative": {
+        "processed_samples": 2048,
+        "frame_count": 1,
+        "pitch_hz": { "...": "SummaryStats" },
+        "spectral": { "...": "SpectralSummary" },
+        "formants": null,
+        "energy": { "...": "SummaryStats" },
+        "jitter": null
+      }
     }
   ]
 }
 ```
 
-`frames` is omitted unless `include_frames=true`.
+`report.frames` is always present. The top-level `frames` field is omitted unless
+`include_frames=true`.
 
 ## Streaming Analysis
 
@@ -225,7 +267,7 @@ Example NDJSON:
 
 ```json
 {"type":"started","backend":"raw_pcm_stream","sample_rate":16000,"channels":1,"config":{"sample_rate":16000,"frame_size":2048,"hop_size":512,"min_pitch_hz":60.0,"max_pitch_hz":500.0,"pitch_clarity_threshold":0.6,"rolloff_ratio":0.85,"voiced_rms_threshold":0.015,"voiced_max_spectral_flatness":0.45,"voiced_max_zero_crossing_rate":0.25}}
-{"type":"frame","frame":{"frame_index":0,"start_sample":0,"start_seconds":0.0,"end_sample":2048,"end_seconds":0.128,"pitch_hz":219.6,"pitch_clarity":0.92,"spectral_rolloff_hz":312.5,"spectral_centroid_hz":236.1,"spectral_bandwidth_hz":88.4,"spectral_flatness":0.01,"zcr":0.03,"rms":0.35,"hnr_db":14.7,"energy":0.12}}
+{"type":"frame","frame":{"frame_index":0,"start_sample":0,"start_seconds":0.0,"end_sample":2048,"end_seconds":0.128,"pitch_hz":219.6,"pitch_clarity":0.92,"spectral_rolloff_hz":312.5,"spectral_centroid_hz":236.1,"spectral_bandwidth_hz":88.4,"spectral_flatness":0.01,"zcr":0.03,"rms":0.35,"hnr_db":14.7,"energy":0.12,"formants_hz":[],"formant_bandwidths_hz":[],"cumulative":{"processed_samples":2048,"frame_count":1,"pitch_hz":{"...":"SummaryStats"},"spectral":{"...":"SpectralSummary"},"formants":null,"energy":{"...":"SummaryStats"},"jitter":null}}}
 {"type":"chunk","chunk":{"chunk_index":0,"input_samples":4096,"frame_count":5,"pitch_hz":{"count":5,"mean":220.1,"std":0.6,"median":220.0,"min":219.3,"max":221.0,"p5":219.4,"p95":220.9},"spectral":{"...":"SpectralSummary"},"energy":{"count":5,"mean":0.12,"std":0.001,"median":0.12,"min":0.119,"max":0.122,"p5":0.119,"p95":0.122},"jitter":null}}
 {"type":"summary_partial","processed_seconds":0.256,"overall":{"processed_samples":4096,"frame_count":5,"pitch_hz":{"count":5,"mean":220.1,"std":0.6,"median":220.0,"min":219.3,"max":221.0,"p5":219.4,"p95":220.9},"spectral":{"...":"SpectralSummary"},"energy":{"count":5,"mean":0.12,"std":0.001,"median":0.12,"min":0.119,"max":0.122,"p5":0.119,"p95":0.122},"jitter":null}}
 {"type":"summary","processed_seconds":1.248,"overall":{"processed_samples":19968,"frame_count":36,"pitch_hz":{"...":"SummaryStats"},"spectral":{"...":"SpectralSummary"},"energy":{"...":"SummaryStats"},"jitter":null}}

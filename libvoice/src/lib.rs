@@ -36,6 +36,7 @@ mod tests {
         let report = VoiceAnalyzer::analyze_buffer(AnalyzerConfig::new(sample_rate), &samples);
 
         assert_eq!(report.chunks.len(), 1);
+        assert_eq!(report.frames.len(), report.overall.frame_count);
         assert!(report.overall.frame_count > 0);
         let pitch = report.overall.pitch_hz.unwrap();
         assert!(
