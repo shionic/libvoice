@@ -1,0 +1,31 @@
+services:
+  voiceanalyzerserver:
+    build:
+      context: .
+      dockerfile: Dockerfile.server-cli
+      target: server
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+  voiceanalyzercli:
+    build:
+      context: .
+      dockerfile: Dockerfile.server-cli
+      target: cli
+    profiles:
+      - tools
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+
+  telegrambot:
+    build:
+      context: .
+      dockerfile: telegrambot/Dockerfile
+    environment:
+      TELOXIDE_TOKEN: ${TELOXIDE_TOKEN:?set TELOXIDE_TOKEN before starting telegrambot}
+      RUST_LOG: ${RUST_LOG:-telegrambot=info,teloxide=info}
+    restart: unless-stopped
