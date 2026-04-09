@@ -109,6 +109,11 @@ fn assert_reports_close(full: &AnalysisReport, streamed: &AnalysisReport) {
         streamed_spectral.bandwidth_hz.mean,
         0.01,
     );
+    approx_eq(
+        full_spectral.tilt_db_per_octave.mean,
+        streamed_spectral.tilt_db_per_octave.mean,
+        0.01,
+    );
 }
 
 #[test]
@@ -209,6 +214,23 @@ fn streaming_accumulates_metrics_consistently_with_variable_chunk_sizes() {
         actual.overall.spectral.as_ref().unwrap().flatness.mean,
         1.0e-6,
     );
+    approx_eq(
+        expected
+            .overall
+            .spectral
+            .as_ref()
+            .unwrap()
+            .tilt_db_per_octave
+            .mean,
+        actual
+            .overall
+            .spectral
+            .as_ref()
+            .unwrap()
+            .tilt_db_per_octave
+            .mean,
+        1.0e-6,
+    );
 }
 
 #[test]
@@ -282,6 +304,7 @@ fn voiced_sine_produces_concentrated_spectral_summary() {
     assert!(spectral.rolloff_hz.mean < 500.0);
     assert!(spectral.bandwidth_hz.mean < 250.0);
     assert!(spectral.flatness.mean < 0.1);
+    assert!(spectral.tilt_db_per_octave.mean < 0.0);
 }
 
 #[test]
@@ -341,6 +364,7 @@ fn report_serializes_to_json() {
     assert!(json.contains("\"frames\""));
     assert!(json.contains("\"chunks\""));
     assert!(json.contains("\"spectral\""));
+    assert!(json.contains("\"tilt_db_per_octave\""));
     assert!(json.contains("\"formants\""));
 }
 
@@ -359,10 +383,12 @@ fn report_exposes_frames_with_cumulative_statistics() {
         first.cumulative.pitch_hz.as_ref().unwrap().mean,
         first.pitch_hz.unwrap()
     );
+    assert!(first.spectral_tilt_db_per_octave.is_finite());
 
     let last = report.frames.last().unwrap();
     assert_eq!(last.cumulative, report.overall);
     assert!(last.cumulative.pitch_hz.as_ref().unwrap().median > 0.0);
     assert!(last.cumulative.pitch_hz.as_ref().unwrap().p5 > 0.0);
     assert!(last.cumulative.pitch_hz.as_ref().unwrap().p95 > 0.0);
+    assert!(last.cumulative.spectral.as_ref().is_some());
 }

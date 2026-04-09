@@ -1,0 +1,13 @@
+[package]
+name = "telegrambot"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+libvoice = { path = "../libvoice" }
+mime = "0.3"
+symphonia = { workspace = true }
+teloxide = { version = "0.17.0", features = ["ctrlc_handler", "rustls"] }
+tokio = { workspace = true }

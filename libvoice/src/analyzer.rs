@@ -59,8 +59,11 @@ impl VoiceAnalyzer {
             if self.is_voiced_frame(&features) {
                 self.overall_frames.push(features.clone());
                 frame_features.push(features.clone());
-                let cumulative =
-                    summarize_overall(frame_start_sample + self.config.frame_size, &self.overall_frames, 0.0);
+                let cumulative = summarize_overall(
+                    frame_start_sample + self.config.frame_size,
+                    &self.overall_frames,
+                    0.0,
+                );
                 frames.push(self.build_frame_analysis(frame_start_sample, features, cumulative));
             }
         }
@@ -165,6 +168,7 @@ impl VoiceAnalyzer {
             spectral_centroid_hz: features.spectral_centroid_hz,
             spectral_bandwidth_hz: features.spectral_bandwidth_hz,
             spectral_flatness: features.spectral_flatness,
+            spectral_tilt_db_per_octave: features.spectral_tilt_db_per_octave,
             zcr: features.zcr,
             rms: features.rms,
             hnr_db: features.hnr_db,

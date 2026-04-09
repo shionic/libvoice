@@ -67,6 +67,11 @@ impl FrameAnalyzer {
         let mut power_sum = 0.0_f32;
         let mut log_sum = 0.0_f32;
         let mut rolloff_hz = 0.0_f32;
+        let mut tilt_count = 0usize;
+        let mut sum_log_hz = 0.0_f32;
+        let mut sum_db = 0.0_f32;
+        let mut sum_log_hz_sq = 0.0_f32;
+        let mut sum_log_hz_db = 0.0_f32;
 
         for (index, bin) in self.fft_output.iter().enumerate() {
             let magnitude = (bin.re.mul_add(bin.re, bin.im * bin.im))
@@ -79,6 +84,16 @@ impl FrameAnalyzer {
             power_sum += power;
             weighted_sum += hz * magnitude;
             log_sum += power.ln();
+
+            if index > 0 && hz > 0.0 {
+                let log_hz = hz.log2();
+                let db = 20.0 * magnitude.log10();
+                tilt_count += 1;
+                sum_log_hz += log_hz;
+                sum_db += db;
+                sum_log_hz_sq += log_hz * log_hz;
+                sum_log_hz_db += log_hz * db;
+            }
         }
 
         let centroid = if magnitude_sum > 0.0 {
@@ -113,6 +128,18 @@ impl FrameAnalyzer {
             0.0
         };
 
+        let spectral_tilt_db_per_octave = if tilt_count >= 2 {
+            let count = tilt_count as f32;
+            let denominator = count * sum_log_hz_sq - sum_log_hz * sum_log_hz;
+            if denominator.abs() > 1.0e-6 {
+                (count * sum_log_hz_db - sum_log_hz * sum_db) / denominator
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        };
+
         let pitch = self.pitch_analyzer.estimate_pitch_hz(
             frame,
             self.config.sample_rate,
@@ -134,6 +161,7 @@ impl FrameAnalyzer {
             spectral_centroid_hz: centroid,
             spectral_bandwidth_hz: bandwidth,
             spectral_flatness: flatness,
+            spectral_tilt_db_per_octave,
             zcr,
             rms,
             hnr_db,

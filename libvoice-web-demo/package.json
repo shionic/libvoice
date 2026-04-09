@@ -1,0 +1,11 @@
+{
+  "name": "libvoice-web-demo",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "cd ../libvoice-wasm && wasm-pack build --target web --out-dir ../libvoice-web-demo/pkg",
+    "build:wasm": "cd ../libvoice-wasm && wasm-pack build --target web --out-dir ../libvoice-web-demo/pkg",
+    "serve": "python3 -m http.server 4173"
+  }
+}

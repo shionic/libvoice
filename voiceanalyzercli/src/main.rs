@@ -608,7 +608,12 @@ fn format_text_report(output: &FileAnalysisOutput, args: &Args) -> String {
     format_optional_stats(&mut out, "Energy (mean-square)", overall.energy.as_ref());
     format_optional_spectral(&mut out, overall.spectral.as_ref());
     format_optional_formants(&mut out, overall.formants.as_ref());
-    format_frame_slice(&mut out, &output.voiced_frames, args.frame_from, args.frame_to);
+    format_frame_slice(
+        &mut out,
+        &output.voiced_frames,
+        args.frame_from,
+        args.frame_to,
+    );
     out
 }
 
@@ -640,7 +645,7 @@ fn format_frame_slice(
     for frame in selected {
         writeln!(
             out,
-            "Frame {}: {:.3}-{:.3}s pitch {} clarity {} energy {} rms {} zcr {} rolloff {} centroid {} bandwidth {} flatness {} hnr {}",
+            "Frame {}: {:.3}-{:.3}s pitch {} clarity {} energy {} rms {} zcr {} rolloff {} centroid {} bandwidth {} flatness {} tilt {} hnr {}",
             frame.frame_index,
             frame.start_seconds,
             frame.end_seconds,
@@ -653,17 +658,13 @@ fn format_frame_slice(
             format_value(frame.spectral_centroid_hz),
             format_value(frame.spectral_bandwidth_hz),
             format_value(frame.spectral_flatness),
+            format_value(frame.spectral_tilt_db_per_octave),
             format_value(frame.hnr_db),
         )
         .unwrap();
 
         if !frame.formants_hz.is_empty() {
-            writeln!(
-                out,
-                "  Formants Hz: {}",
-                format_series(&frame.formants_hz)
-            )
-            .unwrap();
+            writeln!(out, "  Formants Hz: {}", format_series(&frame.formants_hz)).unwrap();
         }
 
         if !frame.formant_bandwidths_hz.is_empty() {
@@ -792,6 +793,13 @@ fn format_optional_spectral(out: &mut String, spectral: Option<&SpectralSummary>
                 "Spectral flatness: mean {}, std {}",
                 format_value(spectral.flatness.mean),
                 format_value(spectral.flatness.std)
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "Spectral tilt (dB/oct): mean {}, std {}",
+                format_value(spectral.tilt_db_per_octave.mean),
+                format_value(spectral.tilt_db_per_octave.std)
             )
             .unwrap();
             writeln!(

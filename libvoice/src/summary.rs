@@ -63,6 +63,10 @@ fn summarize_spectral(frames: &[FrameFeatures]) -> Option<SpectralSummary> {
         centroid_hz: summarize_required(frames.iter().map(|f| f.spectral_centroid_hz)).unwrap(),
         bandwidth_hz: summarize_required(frames.iter().map(|f| f.spectral_bandwidth_hz)).unwrap(),
         flatness: summarize_required(frames.iter().map(|f| f.spectral_flatness)).unwrap(),
+        tilt_db_per_octave: summarize_required(
+            frames.iter().map(|f| f.spectral_tilt_db_per_octave),
+        )
+        .unwrap(),
         zcr: summarize_required(frames.iter().map(|f| f.zcr)).unwrap(),
         rms: summarize_required(frames.iter().map(|f| f.rms)).unwrap(),
         hnr_db: summarize_required(frames.iter().map(|f| f.hnr_db)).unwrap(),

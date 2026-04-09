@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>libvoice Web Demo</title>
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="hero-panel">
+        <p class="eyebrow">libvoice-wasm</p>
+        <h1>Realtime Voice Analyzer</h1>
+        <p class="hero-copy">
+          Capture microphone audio, analyze it in 100ms intervals, smooth the
+          moment values inside each interval, and inspect chunk plus final
+          summary data separately.
+        </p>
+        <div class="controls">
+          <button id="start-button" class="action action-primary">Start</button>
+          <button id="stop-button" class="action action-secondary" disabled>
+            Stop
+          </button>
+        </div>
+        <dl class="status-grid">
+          <div>
+            <dt>Status</dt>
+            <dd id="status-text">Idle</dd>
+          </div>
+          <div>
+            <dt>Sample Rate</dt>
+            <dd id="sample-rate-text">-</dd>
+          </div>
+          <div>
+            <dt>Chunk Size</dt>
+            <dd id="chunk-size-text">100 ms</dd>
+          </div>
+          <div>
+            <dt>Processed Chunks</dt>
+            <dd id="chunk-count-text">0</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="panel-grid">
+        <article class="data-panel">
+          <div class="panel-header">
+            <h2>Moment Data</h2>
+            <p>Smoothed across voiced frames inside the current 100ms interval.</p>
+          </div>
+          <div id="moment-grid" class="metric-grid"></div>
+        </article>
+
+        <article class="data-panel">
+          <div class="panel-header">
+            <h2>Summarize Data</h2>
+            <p>Chunk summary fields returned by the analyzer for the latest interval.</p>
+          </div>
+          <div id="summary-grid" class="metric-grid"></div>
+        </article>
+      </section>
+
+      <section class="data-panel final-panel">
+        <div class="panel-header">
+          <h2>Final Summary JSON</h2>
+          <p>Printed exactly as returned by `analyzer.finalize()` after stop.</p>
+        </div>
+        <pre id="final-json" class="json-output">Press Start to begin analysis.</pre>
+      </section>
+    </main>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+  </html>
