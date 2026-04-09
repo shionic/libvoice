@@ -11,7 +11,7 @@ use options::{analyze_usage_hint, parse_analyze_options};
 use report::format_report;
 use teloxide::net::Download;
 use teloxide::prelude::*;
-use teloxide::types::{InputFile, InputMedia, InputMediaPhoto, Message, ParseMode};
+use teloxide::types::{InputFile, InputMedia, InputMediaPhoto, Message, ParseMode, ThreadId};
 use tokio::task;
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
@@ -24,24 +24,24 @@ async fn main() {
 
     teloxide::repl(bot, |bot: Bot, msg: Message| async move {
         let reply_chat_id = msg.chat.id;
+        let reply_thread_id = msg.thread_id;
         let command_text = msg.text().map(str::to_owned);
         let error_bot = bot.clone();
         if let Err(error) = handle_message(bot, msg).await {
             error!(%error, "request handling failed");
-            if command_text
-                .as_deref()
-                .is_some_and(|text| text.starts_with("/analyze"))
-            {
-                let _ = error_bot
-                    .send_message(
-                        reply_chat_id,
-                        format!(
-                            "<b>Could not analyze that audio.</b>\n\n{}",
-                            escape_html(&error)
-                        ),
-                    )
-                    .parse_mode(ParseMode::Html)
-                    .await;
+            if command_text.as_deref().is_some_and(is_analyze_command) {
+                let mut request = error_bot.send_message(
+                    reply_chat_id,
+                    format!(
+                        "<b>Could not analyze that audio.</b>\n\n{}",
+                        escape_html(&error)
+                    ),
+                );
+                request = request.parse_mode(ParseMode::Html);
+                if let Some(thread_id) = reply_thread_id {
+                    request = request.message_thread_id(thread_id);
+                }
+                let _ = request.await;
             }
         }
         respond(())
@@ -53,7 +53,7 @@ async fn handle_message(bot: Bot, msg: Message) -> Result<(), String> {
     let Some(text) = msg.text() else {
         return Ok(());
     };
-    if !text.starts_with("/analyze") {
+    if !is_analyze_command(text) {
         return Ok(());
     }
 
@@ -73,16 +73,21 @@ async fn handle_message(bot: Bot, msg: Message) -> Result<(), String> {
         "selected input audio"
     );
 
-    bot.send_message(
-        msg.chat.id,
-        format!(
-            "<b>Received</b> {}.\nDownloading and analyzing it now. This can take a few seconds.",
-            escape_html(&input.label)
-        ),
-    )
-    .parse_mode(ParseMode::Html)
-    .await
-    .map_err(|error| format!("failed to send progress message: {error}"))?;
+    let mut progress_request = bot
+        .send_message(
+            msg.chat.id,
+            format!(
+                "<b>Received</b> {}.\nDownloading and analyzing it now. This can take a few seconds.",
+                escape_html(&input.label)
+            ),
+        )
+        .parse_mode(ParseMode::Html);
+    if let Some(thread_id) = msg.thread_id {
+        progress_request = progress_request.message_thread_id(thread_id);
+    }
+    progress_request
+        .await
+        .map_err(|error| format!("failed to send progress message: {error}"))?;
 
     let telegram_file = bot
         .get_file(input.file_id.clone())
@@ -123,15 +128,25 @@ async fn handle_message(bot: Bot, msg: Message) -> Result<(), String> {
         "analysis completed"
     );
 
-    send_long_message(&bot, msg.chat.id, &report_text).await?;
-    send_graphs(&bot, msg.chat.id, graphs).await
+    send_long_message(&bot, msg.chat.id, msg.thread_id, &report_text).await?;
+    send_graphs(&bot, msg.chat.id, msg.thread_id, graphs).await
 }
 
-async fn send_long_message(bot: &Bot, chat_id: ChatId, text: &str) -> Result<(), String> {
+async fn send_long_message(
+    bot: &Bot,
+    chat_id: ChatId,
+    thread_id: Option<ThreadId>,
+    text: &str,
+) -> Result<(), String> {
     const LIMIT: usize = 3500;
     if text.len() <= LIMIT {
-        bot.send_message(chat_id, text.to_string())
-            .parse_mode(ParseMode::Html)
+        let mut request = bot
+            .send_message(chat_id, text.to_string())
+            .parse_mode(ParseMode::Html);
+        if let Some(thread_id) = thread_id {
+            request = request.message_thread_id(thread_id);
+        }
+        request
             .await
             .map_err(|error| format!("failed to send analysis result: {error}"))?;
         return Ok(());
@@ -140,8 +155,13 @@ async fn send_long_message(bot: &Bot, chat_id: ChatId, text: &str) -> Result<(),
     let mut current = String::new();
     for line in text.lines() {
         if !current.is_empty() && current.len() + line.len() + 1 > LIMIT {
-            bot.send_message(chat_id, current.clone())
-                .parse_mode(ParseMode::Html)
+            let mut request = bot
+                .send_message(chat_id, current.clone())
+                .parse_mode(ParseMode::Html);
+            if let Some(thread_id) = thread_id {
+                request = request.message_thread_id(thread_id);
+            }
+            request
                 .await
                 .map_err(|error| format!("failed to send analysis chunk: {error}"))?;
             current.clear();
@@ -153,8 +173,13 @@ async fn send_long_message(bot: &Bot, chat_id: ChatId, text: &str) -> Result<(),
     }
 
     if !current.is_empty() {
-        bot.send_message(chat_id, current)
-            .parse_mode(ParseMode::Html)
+        let mut request = bot
+            .send_message(chat_id, current)
+            .parse_mode(ParseMode::Html);
+        if let Some(thread_id) = thread_id {
+            request = request.message_thread_id(thread_id);
+        }
+        request
             .await
             .map_err(|error| format!("failed to send final analysis chunk: {error}"))?;
     }
@@ -162,7 +187,12 @@ async fn send_long_message(bot: &Bot, chat_id: ChatId, text: &str) -> Result<(),
     Ok(())
 }
 
-async fn send_graphs(bot: &Bot, chat_id: ChatId, graphs: Vec<GraphImage>) -> Result<(), String> {
+async fn send_graphs(
+    bot: &Bot,
+    chat_id: ChatId,
+    thread_id: Option<ThreadId>,
+    graphs: Vec<GraphImage>,
+) -> Result<(), String> {
     if graphs.is_empty() {
         return Ok(());
     }
@@ -194,7 +224,11 @@ async fn send_graphs(bot: &Bot, chat_id: ChatId, graphs: Vec<GraphImage>) -> Res
         })
         .collect::<Vec<_>>();
 
-    bot.send_media_group(chat_id, media)
+    let mut request = bot.send_media_group(chat_id, media);
+    if let Some(thread_id) = thread_id {
+        request = request.message_thread_id(thread_id);
+    }
+    request
         .await
         .map_err(|error| format!("failed to send graph group: {error}"))?;
 
@@ -206,6 +240,15 @@ fn escape_html(value: &str) -> String {
         .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+fn is_analyze_command(text: &str) -> bool {
+    let Some(command) = text.split_whitespace().next() else {
+        return false;
+    };
+
+    let command_name = command.split('@').next().unwrap_or(command);
+    command_name == "/analyze"
 }
 
 fn init_logging() {

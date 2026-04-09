@@ -1,5 +1,5 @@
 use crate::config::AnalyzerConfig;
-use crate::formant::FormantAnalyzer;
+use crate::formant::{FormantAnalyzer, FormantTracker};
 use crate::model::FrameFeatures;
 use crate::signal::{PitchAnalyzer, estimate_hnr_db, estimate_loudness_dbfs, zero_crossing_rate};
 use realfft::{RealFftPlanner, RealToComplex};
@@ -14,6 +14,7 @@ pub(crate) struct FrameAnalyzer {
     magnitudes: Vec<f32>,
     pitch_analyzer: PitchAnalyzer,
     formant_analyzer: FormantAnalyzer,
+    formant_tracker: FormantTracker,
     window: Vec<f32>,
     bin_hz: f32,
 }
@@ -34,6 +35,7 @@ impl FrameAnalyzer {
             magnitudes: Vec::new(),
             pitch_analyzer: PitchAnalyzer::new(),
             formant_analyzer: FormantAnalyzer::new(),
+            formant_tracker: FormantTracker::new(),
             window,
             bin_hz,
         }
@@ -150,7 +152,10 @@ impl FrameAnalyzer {
         let pitch_hz = pitch.map(|estimate| estimate.hz);
         let loudness_dbfs = estimate_loudness_dbfs(rms);
         let hnr_db = estimate_hnr_db(pitch.map(|estimate| estimate.periodicity).unwrap_or(0.0));
-        let formants = self.formant_analyzer.estimate(frame, &self.config);
+        let detected_formants = self.formant_analyzer.estimate(frame, &self.config);
+        let formants = self
+            .formant_tracker
+            .track(&detected_formants, self.config.max_formants);
         FrameFeatures {
             pitch_hz,
             pitch_clarity: pitch.map(|estimate| estimate.clarity).unwrap_or(0.0),

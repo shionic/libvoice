@@ -702,7 +702,13 @@ fn format_optional_value(value: Option<f32>) -> String {
 fn format_series(values: &[f32]) -> String {
     values
         .iter()
-        .map(|value| format_value(*value))
+        .map(|value| {
+            if *value > 0.0 {
+                format_value(*value)
+            } else {
+                "-".to_string()
+            }
+        })
         .collect::<Vec<_>>()
         .join(", ")
 }

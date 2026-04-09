@@ -82,7 +82,13 @@ fn build_pitch_graph(frames: &[FrameAnalysis]) -> Result<Option<GraphImage>, Str
 fn build_formants_graph(frames: &[FrameAnalysis]) -> Result<Option<GraphImage>, String> {
     let mut all_values = Vec::new();
     for frame in frames {
-        all_values.extend(frame.formants_hz.iter().copied());
+        all_values.extend(
+            frame
+                .formants_hz
+                .iter()
+                .copied()
+                .filter(|value| *value > 0.0),
+        );
     }
     if all_values.is_empty() {
         return Ok(None);
@@ -102,10 +108,16 @@ fn build_formants_graph(frames: &[FrameAnalysis]) -> Result<Option<GraphImage>, 
         |chart: &mut Chart2d<'_, '_>| {
             for (slot, (label, color)) in labels.iter().zip(colors.iter()).enumerate() {
                 for run in &runs {
-                    let series =
-                        segmented_optional_series(run.iter().map(|frame| {
-                            (frame.start_seconds, frame.formants_hz.get(slot).copied())
-                        }));
+                    let series = segmented_optional_series(run.iter().map(|frame| {
+                        (
+                            frame.start_seconds,
+                            frame
+                                .formants_hz
+                                .get(slot)
+                                .copied()
+                                .filter(|value| *value > 0.0),
+                        )
+                    }));
                     for segment in series {
                         chart.draw_series(LineSeries::new(segment, color))?;
                     }

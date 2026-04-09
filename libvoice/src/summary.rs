@@ -92,12 +92,14 @@ fn summarize_formant_slot(frames: &[FrameFeatures], index: usize) -> Option<Form
         frame
             .formants
             .get(index)
+            .filter(|formant| formant.frequency_hz > 0.0)
             .map(|formant| formant.frequency_hz)
     }))?;
     let bandwidth_hz = summarize_optional(frames.iter().filter_map(|frame| {
         frame
             .formants
             .get(index)
+            .filter(|formant| formant.bandwidth_hz > 0.0)
             .map(|formant| formant.bandwidth_hz)
     }))?;
 

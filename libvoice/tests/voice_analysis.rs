@@ -353,6 +353,34 @@ fn streaming_matches_formants_for_vowel_like_signal() {
 }
 
 #[test]
+fn formants_remain_stable_across_sample_rates() {
+    let low_rate = 16_000;
+    let high_rate = 48_000;
+    let low_report = VoiceAnalyzer::analyze_buffer(
+        AnalyzerConfig::new(low_rate),
+        &synth_vowel_like(low_rate, 140.0, 1.2, &[(730.0, 80.0), (1_090.0, 100.0)]),
+    );
+    let high_report = VoiceAnalyzer::analyze_buffer(
+        AnalyzerConfig::new(high_rate),
+        &synth_vowel_like(high_rate, 140.0, 1.2, &[(730.0, 80.0), (1_090.0, 100.0)]),
+    );
+
+    let low_formants = low_report.overall.formants.as_ref().unwrap();
+    let high_formants = high_report.overall.formants.as_ref().unwrap();
+
+    approx_eq(
+        low_formants.f1.as_ref().unwrap().frequency_hz.mean,
+        high_formants.f1.as_ref().unwrap().frequency_hz.mean,
+        70.0,
+    );
+    approx_eq(
+        low_formants.f2.as_ref().unwrap().frequency_hz.mean,
+        high_formants.f2.as_ref().unwrap().frequency_hz.mean,
+        90.0,
+    );
+}
+
+#[test]
 fn report_serializes_to_json() {
     let sample_rate = 16_000;
     let samples = synth_sine(sample_rate, 220.0, 0.5, 0.5);

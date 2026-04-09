@@ -234,7 +234,7 @@ function smoothMomentData(frames) {
       .map((frame) =>
         readArrayValue(getField(frame, "formants_hz", "formantsHz"), index),
       )
-      .filter(isFiniteNumber),
+      .filter((value) => isFiniteNumber(value) && value > 0),
   );
 
   return {
