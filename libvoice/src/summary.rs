@@ -69,6 +69,7 @@ fn summarize_spectral(frames: &[FrameFeatures]) -> Option<SpectralSummary> {
         .unwrap(),
         zcr: summarize_required(frames.iter().map(|f| f.zcr)).unwrap(),
         rms: summarize_required(frames.iter().map(|f| f.rms)).unwrap(),
+        loudness_dbfs: summarize_required(frames.iter().map(|f| f.loudness_dbfs)).unwrap(),
         hnr_db: summarize_required(frames.iter().map(|f| f.hnr_db)).unwrap(),
     })
 }

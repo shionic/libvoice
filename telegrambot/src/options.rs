@@ -5,6 +5,7 @@ pub struct AnalyzeOptions {
     pub spectral: bool,
     pub energy: bool,
     pub formants: bool,
+    pub graph: bool,
 }
 
 impl Default for AnalyzeOptions {
@@ -15,6 +16,7 @@ impl Default for AnalyzeOptions {
             spectral: true,
             energy: false,
             formants: false,
+            graph: false,
         }
     }
 }
@@ -39,16 +41,18 @@ pub fn parse_analyze_options(text: &str) -> Result<AnalyzeOptions, String> {
             "spectral" => options.spectral = enabled,
             "energy" => options.energy = enabled,
             "formants" => options.formants = enabled,
+            "graph" => options.graph = enabled,
             "all" => {
                 options.pitch = enabled;
                 options.hnr = enabled;
                 options.spectral = enabled;
                 options.energy = enabled;
                 options.formants = enabled;
+                options.graph = enabled;
             }
             _ => {
                 return Err(format!(
-                    "Unknown feature `{token}`.\nUse: +/-pitch, +/-hnr, +/-spectral, +/-energy, +/-formants, +/-all"
+                    "Unknown feature `{token}`.\nUse: +/-pitch, +/-hnr, +/-spectral, +/-energy, +/-formants, +/-graph, +/-all"
                 ));
             }
         }
@@ -58,5 +62,5 @@ pub fn parse_analyze_options(text: &str) -> Result<AnalyzeOptions, String> {
 }
 
 pub fn analyze_usage_hint() -> &'static str {
-    "Reply to a voice message or audio file with <code>/analyze</code>.\nDefault sections: <code>+pitch +hnr +spectral</code>\nExample: <code>/analyze +formants -spectral</code>"
+    "Reply to a voice message or audio file with <code>/analyze</code>.\nDefault sections: <code>+pitch +hnr +spectral</code>\nExtra features: <code>+formants +energy +graph</code>\nExample: <code>/analyze +graph +formants -spectral</code>"
 }

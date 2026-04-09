@@ -1,15 +1,17 @@
 mod audio;
+mod graphs;
 mod input;
 mod options;
 mod report;
 
 use audio::{analyze_samples, decode_audio_bytes};
+use graphs::{GraphImage, generate_graphs};
 use input::find_input_audio;
 use options::{analyze_usage_hint, parse_analyze_options};
 use report::format_report;
 use teloxide::net::Download;
 use teloxide::prelude::*;
-use teloxide::types::{Message, ParseMode};
+use teloxide::types::{InputFile, InputMedia, InputMediaPhoto, Message, ParseMode};
 use tokio::task;
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
@@ -100,10 +102,16 @@ async fn handle_message(bot: Bot, msg: Message) -> Result<(), String> {
     );
 
     let file_name = input.file_name.clone();
-    let report_text = task::spawn_blocking(move || {
+    let (report_text, graphs) = task::spawn_blocking(move || {
         let decoded = decode_audio_bytes(&bytes, file_name.as_deref())?;
         let report = analyze_samples(&decoded);
-        Ok::<_, String>(format_report(&input.label, &decoded, &report, &options))
+        let report_text = format_report(&input.label, &decoded, &report, &options);
+        let graphs = if options.graph {
+            generate_graphs(&report)?
+        } else {
+            Vec::new()
+        };
+        Ok::<_, String>((report_text, graphs))
     })
     .await
     .map_err(|error| format!("analysis task failed: {error}"))??;
@@ -111,10 +119,12 @@ async fn handle_message(bot: Bot, msg: Message) -> Result<(), String> {
         chat_id = msg.chat.id.0,
         message_id = msg.id.0,
         report_len = report_text.len(),
+        graph_count = graphs.len(),
         "analysis completed"
     );
 
-    send_long_message(&bot, msg.chat.id, &report_text).await
+    send_long_message(&bot, msg.chat.id, &report_text).await?;
+    send_graphs(&bot, msg.chat.id, graphs).await
 }
 
 async fn send_long_message(bot: &Bot, chat_id: ChatId, text: &str) -> Result<(), String> {
@@ -148,6 +158,45 @@ async fn send_long_message(bot: &Bot, chat_id: ChatId, text: &str) -> Result<(),
             .await
             .map_err(|error| format!("failed to send final analysis chunk: {error}"))?;
     }
+
+    Ok(())
+}
+
+async fn send_graphs(bot: &Bot, chat_id: ChatId, graphs: Vec<GraphImage>) -> Result<(), String> {
+    if graphs.is_empty() {
+        return Ok(());
+    }
+
+    let title_list = graphs
+        .iter()
+        .map(|graph| graph.title.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let media = graphs
+        .into_iter()
+        .enumerate()
+        .map(|(index, graph)| {
+            let photo =
+                InputMediaPhoto::new(InputFile::memory(graph.png_bytes).file_name(graph.file_name));
+            if index == 0 {
+                InputMedia::Photo(
+                    photo
+                        .caption(format!(
+                            "<b>Analysis graphs</b>\n{}",
+                            escape_html(&title_list)
+                        ))
+                        .parse_mode(ParseMode::Html),
+                )
+            } else {
+                InputMedia::Photo(photo)
+            }
+        })
+        .collect::<Vec<_>>();
+
+    bot.send_media_group(chat_id, media)
+        .await
+        .map_err(|error| format!("failed to send graph group: {error}"))?;
 
     Ok(())
 }

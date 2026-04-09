@@ -645,7 +645,7 @@ fn format_frame_slice(
     for frame in selected {
         writeln!(
             out,
-            "Frame {}: {:.3}-{:.3}s pitch {} clarity {} energy {} rms {} zcr {} rolloff {} centroid {} bandwidth {} flatness {} tilt {} hnr {}",
+            "Frame {}: {:.3}-{:.3}s pitch {} clarity {} energy {} rms {} loudness_dbfs {} zcr {} rolloff {} centroid {} bandwidth {} flatness {} tilt {} hnr {}",
             frame.frame_index,
             frame.start_seconds,
             frame.end_seconds,
@@ -653,6 +653,7 @@ fn format_frame_slice(
             format_value(frame.pitch_clarity),
             format_value(frame.energy),
             format_value(frame.rms),
+            format_value(frame.loudness_dbfs),
             format_value(frame.zcr),
             format_value(frame.spectral_rolloff_hz),
             format_value(frame.spectral_centroid_hz),
@@ -807,6 +808,13 @@ fn format_optional_spectral(out: &mut String, spectral: Option<&SpectralSummary>
                 "RMS: mean {}, std {}",
                 format_value(spectral.rms.mean),
                 format_value(spectral.rms.std)
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "Loudness (dBFS): mean {}, std {}",
+                format_value(spectral.loudness_dbfs.mean),
+                format_value(spectral.loudness_dbfs.std)
             )
             .unwrap();
             writeln!(

@@ -171,6 +171,7 @@ impl VoiceAnalyzer {
             spectral_tilt_db_per_octave: features.spectral_tilt_db_per_octave,
             zcr: features.zcr,
             rms: features.rms,
+            loudness_dbfs: features.loudness_dbfs,
             hnr_db: features.hnr_db,
             energy: features.energy,
             formants_hz: features

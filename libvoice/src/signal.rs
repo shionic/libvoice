@@ -160,6 +160,10 @@ pub(crate) fn estimate_hnr_db(periodicity: f32) -> f32 {
     10.0 * (harmonicity / (1.0 - harmonicity)).log10()
 }
 
+pub(crate) fn estimate_loudness_dbfs(rms: f32) -> f32 {
+    20.0 * rms.max(1.0e-12).log10()
+}
+
 fn parabolic_refine(index: usize, values: &[f32]) -> f32 {
     if index == 0 || index + 1 >= values.len() {
         return index as f32;

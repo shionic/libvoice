@@ -6,10 +6,13 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
 libvoice = { path = "../libvoice" }
 mime = "0.3"
+plotters = { version = "0.3.7", default-features = false, features = ["bitmap_backend", "bitmap_encoder", "line_series", "ttf"] }
 symphonia = { workspace = true }
 teloxide = { version = "0.17.0", features = ["ctrlc_handler", "rustls"] }
+tempfile = "3"
 tokio = { workspace = true }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }

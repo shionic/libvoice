@@ -1,5 +1,6 @@
 use libvoice::{AnalysisReport, AnalyzerConfig, VoiceAnalyzer};
 use std::io::Cursor;
+use std::io::Write as _;
 use std::path::Path;
 use std::process::Stdio;
 use symphonia::core::audio::{AudioBufferRef, SampleBuffer, Signal};
@@ -9,6 +10,7 @@ use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
+use tempfile::NamedTempFile;
 
 const SAMPLE_RATE: u32 = 16_000;
 
@@ -125,11 +127,21 @@ fn decode_audio_bytes_with_symphonia(
 }
 
 fn decode_audio_bytes_with_ffmpeg(bytes: &[u8]) -> Result<DecodedAudio, String> {
-    let mut child = std::process::Command::new("ffmpeg")
+    let mut temp_input =
+        NamedTempFile::new().map_err(|error| format!("failed to create temp file: {error}"))?;
+    temp_input
+        .write_all(bytes)
+        .map_err(|error| format!("failed to write temp audio file: {error}"))?;
+    temp_input
+        .flush()
+        .map_err(|error| format!("failed to flush temp audio file: {error}"))?;
+
+    let output = std::process::Command::new("ffmpeg")
+        .arg("-nostdin")
         .arg("-v")
         .arg("error")
         .arg("-i")
-        .arg("pipe:0")
+        .arg(temp_input.path())
         .arg("-f")
         .arg("f32le")
         .arg("-ac")
@@ -137,25 +149,10 @@ fn decode_audio_bytes_with_ffmpeg(bytes: &[u8]) -> Result<DecodedAudio, String> 
         .arg("-ar")
         .arg(SAMPLE_RATE.to_string())
         .arg("pipe:1")
-        .stdin(Stdio::piped())
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("failed to start ffmpeg: {error}"))?;
-
-    {
-        use std::io::Write as _;
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| "ffmpeg stdin was not captured".to_string())?;
-        stdin
-            .write_all(bytes)
-            .map_err(|error| format!("failed to write input to ffmpeg: {error}"))?;
-    }
-
-    let output = child
-        .wait_with_output()
+        .output()
         .map_err(|error| format!("failed to wait for ffmpeg: {error}"))?;
 
     if !output.status.success() {

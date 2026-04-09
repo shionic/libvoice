@@ -46,6 +46,8 @@ mod tests {
         );
         let energy = report.overall.energy.unwrap();
         assert!(energy.mean > 0.01);
+        let loudness = report.overall.spectral.unwrap().loudness_dbfs;
+        assert!(loudness.mean.is_finite());
     }
 
     #[test]

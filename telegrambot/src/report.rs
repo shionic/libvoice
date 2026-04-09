@@ -94,7 +94,7 @@ pub fn format_report(
     writeln!(&mut out).unwrap();
     writeln!(
         &mut out,
-        "<i>Tip:</i> <code>+energy</code> and <code>+formants</code> add more detail. Use <code>-feature</code> to hide a section."
+        "<i>Tip:</i> <code>+energy</code>, <code>+formants</code>, and <code>+graph</code> add more detail. Use <code>-feature</code> to hide a section."
     )
     .unwrap();
 
@@ -128,9 +128,10 @@ fn format_core_section(
         match spectral {
             Some(spectral) => {
                 lines.push(format!(
-                    "hnr mean     : {} dB\nhnr std      : {}",
+                    "hnr mean     : {} dB\nhnr std      : {}\nloudness     : {} dBFS",
                     format_value(spectral.hnr_db.mean),
-                    format_value(spectral.hnr_db.std)
+                    format_value(spectral.hnr_db.std),
+                    format_value(spectral.loudness_dbfs.mean)
                 ));
             }
             None => lines.push("hnr          : unavailable".to_string()),
@@ -152,6 +153,7 @@ fn format_spectral_section(spectral: Option<&SpectralSummary>) -> String {
         format_stats_block("flatness", Some(&spectral.flatness), None),
         format_stats_block("tilt", Some(&spectral.tilt_db_per_octave), Some("dB/oct")),
         format_stats_block("rms", Some(&spectral.rms), None),
+        format_stats_block("loudness", Some(&spectral.loudness_dbfs), Some("dBFS")),
         format_stats_block("zcr", Some(&spectral.zcr), None),
     ]
     .join("\n\n")

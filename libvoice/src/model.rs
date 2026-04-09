@@ -22,6 +22,7 @@ pub struct SpectralSummary {
     pub tilt_db_per_octave: SummaryStats,
     pub zcr: SummaryStats,
     pub rms: SummaryStats,
+    pub loudness_dbfs: SummaryStats,
     pub hnr_db: SummaryStats,
 }
 
@@ -104,6 +105,7 @@ pub struct FrameAnalysis {
     pub spectral_tilt_db_per_octave: f32,
     pub zcr: f32,
     pub rms: f32,
+    pub loudness_dbfs: f32,
     pub hnr_db: f32,
     pub energy: f32,
     pub formants_hz: Vec<f32>,
@@ -128,6 +130,7 @@ pub(crate) struct FrameFeatures {
     pub(crate) spectral_tilt_db_per_octave: f32,
     pub(crate) zcr: f32,
     pub(crate) rms: f32,
+    pub(crate) loudness_dbfs: f32,
     pub(crate) hnr_db: f32,
     pub(crate) energy: f32,
     pub(crate) formants: Vec<FormantFrame>,
