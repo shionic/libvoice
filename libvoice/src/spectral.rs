@@ -6,6 +6,10 @@ use realfft::{RealFftPlanner, RealToComplex};
 use rustfft::num_complex::Complex32;
 use std::sync::Arc;
 
+const TILT_MIN_FREQUENCY_HZ: f32 = 80.0;
+const TILT_MAX_FREQUENCY_HZ: f32 = 5_000.0;
+const TILT_PEAK_FLOOR_DB: f32 = 40.0;
+
 pub(crate) struct FrameAnalyzer {
     config: AnalyzerConfig,
     fft: Arc<dyn RealToComplex<f32>>,
@@ -69,12 +73,6 @@ impl FrameAnalyzer {
         let mut power_sum = 0.0_f32;
         let mut log_sum = 0.0_f32;
         let mut rolloff_hz = 0.0_f32;
-        let mut tilt_count = 0usize;
-        let mut sum_log_hz = 0.0_f32;
-        let mut sum_db = 0.0_f32;
-        let mut sum_log_hz_sq = 0.0_f32;
-        let mut sum_log_hz_db = 0.0_f32;
-
         for (index, bin) in self.fft_output.iter().enumerate() {
             let magnitude = (bin.re.mul_add(bin.re, bin.im * bin.im))
                 .sqrt()
@@ -86,16 +84,6 @@ impl FrameAnalyzer {
             power_sum += power;
             weighted_sum += hz * magnitude;
             log_sum += power.ln();
-
-            if index > 0 && hz > 0.0 {
-                let log_hz = hz.log2();
-                let db = 20.0 * magnitude.log10();
-                tilt_count += 1;
-                sum_log_hz += log_hz;
-                sum_db += db;
-                sum_log_hz_sq += log_hz * log_hz;
-                sum_log_hz_db += log_hz * db;
-            }
         }
 
         let centroid = if magnitude_sum > 0.0 {
@@ -105,13 +93,14 @@ impl FrameAnalyzer {
         };
 
         let mut bandwidth_sum = 0.0_f32;
-        let threshold = magnitude_sum * self.config.rolloff_ratio.clamp(0.0, 1.0);
+        let threshold = power_sum * self.config.rolloff_ratio.clamp(0.0, 1.0);
         let mut cumulative = 0.0_f32;
         for (index, magnitude) in self.magnitudes.iter().copied().enumerate() {
             let hz = index as f32 * self.bin_hz;
             let diff = hz - centroid;
+            let power = magnitude * magnitude;
             bandwidth_sum += magnitude * diff * diff;
-            cumulative += magnitude;
+            cumulative += power;
             if rolloff_hz == 0.0 && cumulative >= threshold {
                 rolloff_hz = hz;
             }
@@ -130,17 +119,8 @@ impl FrameAnalyzer {
             0.0
         };
 
-        let spectral_tilt_db_per_octave = if tilt_count >= 2 {
-            let count = tilt_count as f32;
-            let denominator = count * sum_log_hz_sq - sum_log_hz * sum_log_hz;
-            if denominator.abs() > 1.0e-6 {
-                (count * sum_log_hz_db - sum_log_hz * sum_db) / denominator
-            } else {
-                0.0
-            }
-        } else {
-            0.0
-        };
+        let spectral_tilt_db_per_octave =
+            estimate_spectral_tilt_db_per_octave(&self.magnitudes, self.bin_hz);
 
         let pitch = self.pitch_analyzer.estimate_pitch_hz(
             frame,
@@ -175,5 +155,117 @@ impl FrameAnalyzer {
             energy,
             formants,
         }
+    }
+}
+
+fn estimate_spectral_tilt_db_per_octave(magnitudes: &[f32], bin_hz: f32) -> f32 {
+    if magnitudes.len() < 3 || bin_hz <= 0.0 {
+        return 0.0;
+    }
+
+    let nyquist_hz = (magnitudes.len().saturating_sub(1)) as f32 * bin_hz;
+    let max_frequency_hz = TILT_MAX_FREQUENCY_HZ.min(nyquist_hz);
+    if max_frequency_hz <= TILT_MIN_FREQUENCY_HZ {
+        return 0.0;
+    }
+
+    let mut peak_power = 0.0_f32;
+    for (index, magnitude) in magnitudes.iter().copied().enumerate().skip(1) {
+        let hz = index as f32 * bin_hz;
+        if hz < TILT_MIN_FREQUENCY_HZ || hz > max_frequency_hz {
+            continue;
+        }
+        peak_power = peak_power.max(magnitude * magnitude);
+    }
+
+    if peak_power <= 1.0e-12 {
+        return 0.0;
+    }
+
+    let power_floor = peak_power * 10.0_f32.powf(-TILT_PEAK_FLOOR_DB / 10.0);
+    let mut weight_sum = 0.0_f32;
+    let mut x_mean = 0.0_f32;
+    let mut y_mean = 0.0_f32;
+    let mut selected_bins = 0usize;
+
+    for (index, magnitude) in magnitudes.iter().copied().enumerate().skip(1) {
+        let hz = index as f32 * bin_hz;
+        if hz < TILT_MIN_FREQUENCY_HZ || hz > max_frequency_hz {
+            continue;
+        }
+
+        let power = magnitude * magnitude;
+        if power < power_floor {
+            continue;
+        }
+
+        let weight = power;
+        let x = hz.log2();
+        let y = 20.0 * magnitude.max(1.0e-12).log10();
+        weight_sum += weight;
+        x_mean += weight * x;
+        y_mean += weight * y;
+        selected_bins += 1;
+    }
+
+    if selected_bins < 3 || weight_sum <= 1.0e-12 {
+        return 0.0;
+    }
+
+    x_mean /= weight_sum;
+    y_mean /= weight_sum;
+
+    let mut covariance = 0.0_f32;
+    let mut variance = 0.0_f32;
+    for (index, magnitude) in magnitudes.iter().copied().enumerate().skip(1) {
+        let hz = index as f32 * bin_hz;
+        if hz < TILT_MIN_FREQUENCY_HZ || hz > max_frequency_hz {
+            continue;
+        }
+
+        let power = magnitude * magnitude;
+        if power < power_floor {
+            continue;
+        }
+
+        let x = hz.log2();
+        let y = 20.0 * magnitude.max(1.0e-12).log10();
+        let centered_x = x - x_mean;
+        covariance += power * centered_x * (y - y_mean);
+        variance += power * centered_x * centered_x;
+    }
+
+    if variance <= 1.0e-6 {
+        0.0
+    } else {
+        covariance / variance
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::estimate_spectral_tilt_db_per_octave;
+
+    #[test]
+    fn flat_spectrum_has_near_zero_tilt() {
+        let magnitudes = vec![1.0_f32; 513];
+        let tilt = estimate_spectral_tilt_db_per_octave(&magnitudes, 15.625);
+        assert!(tilt.abs() < 0.1, "tilt={tilt}");
+    }
+
+    #[test]
+    fn decaying_spectrum_has_negative_tilt() {
+        let magnitudes = (0..513)
+            .map(|index| {
+                let hz = index as f32 * 15.625;
+                if hz <= 0.0 {
+                    1.0
+                } else {
+                    1.0 / hz.sqrt()
+                }
+            })
+            .collect::<Vec<_>>();
+        let tilt = estimate_spectral_tilt_db_per_octave(&magnitudes, 15.625);
+        assert!(tilt < -1.0, "tilt={tilt}");
     }
 }
