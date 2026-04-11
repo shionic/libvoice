@@ -147,8 +147,9 @@ fn build_hnr_loudness_graph(frames: &[FrameAnalysis]) -> Result<Option<GraphImag
     }
 
     let x_range = time_range(frames);
-    let hnr_range = padded_range(&hnr_values, 0.12, 4.0);
-    let loudness_range = padded_range(&loudness_values, 0.12, 4.0);
+    let mut combined_values = hnr_values.clone();
+    combined_values.extend(loudness_values.iter().copied());
+    let y_range = padded_range(&combined_values, 0.12, 4.0);
     let runs = voiced_runs(frames);
 
     let mut buffer = vec![255u8; (WIDTH * HEIGHT * 3) as usize];
@@ -160,21 +161,14 @@ fn build_hnr_loudness_graph(frames: &[FrameAnalysis]) -> Result<Option<GraphImag
         .caption("HNR and loudness", ("sans-serif", 34))
         .x_label_area_size(48)
         .y_label_area_size(68)
-        .right_y_label_area_size(68)
-        .build_cartesian_2d(x_range.clone(), hnr_range.clone())
-        .map_err(draw_err)?
-        .set_secondary_coord(x_range.clone(), loudness_range.clone());
+        .build_cartesian_2d(x_range.clone(), y_range)
+        .map_err(draw_err)?;
 
     chart
         .configure_mesh()
         .x_desc("Time (s)")
-        .y_desc("HNR (dB)")
+        .y_desc("Level (dB / dBFS)")
         .light_line_style(RGBColor(220, 220, 220))
-        .draw()
-        .map_err(draw_err)?;
-    chart
-        .configure_secondary_axes()
-        .y_desc("Loudness (dBFS)")
         .draw()
         .map_err(draw_err)?;
 
@@ -186,7 +180,7 @@ fn build_hnr_loudness_graph(frames: &[FrameAnalysis]) -> Result<Option<GraphImag
             ))
             .map_err(draw_err)?;
         chart
-            .draw_secondary_series(LineSeries::new(
+            .draw_series(LineSeries::new(
                 run.iter()
                     .map(|frame| (frame.start_seconds, frame.loudness_dbfs)),
                 &BLUE,
