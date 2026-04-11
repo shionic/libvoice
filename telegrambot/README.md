@@ -35,3 +35,10 @@ Enable or disable features explicitly:
 /analyze +all
 /analyze -all +pitch +hnr
 ```
+
+Analyze a specific time range:
+
+```text
+/analyze +from 20s +to 1m40s
+/analyze +from 20s +dur 20s
+```

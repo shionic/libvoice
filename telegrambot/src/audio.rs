@@ -36,6 +36,31 @@ pub fn analyze_samples(decoded: &DecodedAudio) -> AnalysisReport {
     VoiceAnalyzer::analyze_buffer(config, &decoded.samples)
 }
 
+pub fn audio_duration_seconds(decoded: &DecodedAudio) -> f32 {
+    decoded.samples.len() as f32 / decoded.sample_rate as f32
+}
+
+pub fn clip_audio_seconds(
+    decoded: &DecodedAudio,
+    from_seconds: f32,
+    to_seconds: f32,
+) -> Result<DecodedAudio, String> {
+    let sample_rate = decoded.sample_rate as f32;
+    let start_sample = (from_seconds * sample_rate).floor() as usize;
+    let end_sample = (to_seconds * sample_rate).ceil() as usize;
+
+    if start_sample >= end_sample || end_sample > decoded.samples.len() {
+        return Err("invalid audio clip range".to_string());
+    }
+
+    Ok(DecodedAudio {
+        backend: decoded.backend,
+        sample_rate: decoded.sample_rate,
+        channels: decoded.channels,
+        samples: decoded.samples[start_sample..end_sample].to_vec(),
+    })
+}
+
 fn decode_audio_bytes_with_symphonia(
     bytes: &[u8],
     file_name: Option<&str>,
