@@ -201,6 +201,7 @@ fn streaming_accumulates_metrics_consistently_with_variable_chunk_sizes() {
         frames: Vec::new(),
         chunks: Vec::new(),
         overall: analyzer.finalize(),
+        fft_spectrum: None,
     };
 
     assert_eq!(expected.overall.frame_count, actual.overall.frame_count);

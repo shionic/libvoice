@@ -1,4 +1,4 @@
-use libvoice::{AnalysisReport, AnalyzerConfig, VoiceAnalyzer};
+use libvoice::{AnalysisOutputOptions, AnalysisReport, AnalyzerConfig, VoiceAnalyzer};
 use std::io::Cursor;
 use std::io::Write as _;
 use std::path::Path;
@@ -31,9 +31,15 @@ pub fn decode_audio_bytes(bytes: &[u8], file_name: Option<&str>) -> Result<Decod
     }
 }
 
-pub fn analyze_samples(decoded: &DecodedAudio) -> AnalysisReport {
+pub fn analyze_samples(decoded: &DecodedAudio, include_fft_spectrum: bool) -> AnalysisReport {
     let config = AnalyzerConfig::new(decoded.sample_rate);
-    VoiceAnalyzer::analyze_buffer(config, &decoded.samples)
+    VoiceAnalyzer::analyze_buffer_with_output_options(
+        config,
+        &decoded.samples,
+        AnalysisOutputOptions {
+            fft_spectrum: include_fft_spectrum,
+        },
+    )
 }
 
 pub fn audio_duration_seconds(decoded: &DecodedAudio) -> f32 {

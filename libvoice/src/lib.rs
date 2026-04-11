@@ -8,15 +8,16 @@ mod stats;
 mod summary;
 
 pub use analyzer::VoiceAnalyzer;
+pub use analyzer::AnalysisOutputOptions;
 pub use config::AnalyzerConfig;
 pub use model::{
-    AnalysisReport, ChunkAnalysis, FormantStats, FormantSummary, FrameAnalysis, JitterMetrics,
-    OverallAnalysis, SpectralSummary, SummaryStats,
+    AnalysisReport, ChunkAnalysis, FftSpectrum, FormantStats, FormantSummary, FrameAnalysis,
+    JitterMetrics, OverallAnalysis, SpectralSummary, SummaryStats,
 };
 
 #[cfg(test)]
 mod tests {
-    use super::{AnalyzerConfig, VoiceAnalyzer};
+    use super::{AnalysisOutputOptions, AnalyzerConfig, VoiceAnalyzer};
     use core::f32::consts::PI;
 
     fn synth_sine(sample_rate: u32, frequency_hz: f32, seconds: f32) -> Vec<f32> {
@@ -67,5 +68,31 @@ mod tests {
 
         assert!(chunks.iter().any(|chunk| chunk.frame_count > 0));
         assert_eq!(single.overall.frame_count, overall.frame_count);
+    }
+
+    #[test]
+    fn can_include_fft_spectrum_output() {
+        let sample_rate = 16_000;
+        let samples = synth_sine(sample_rate, 220.0, 1.0);
+        let report = VoiceAnalyzer::analyze_buffer_with_output_options(
+            AnalyzerConfig::new(sample_rate),
+            &samples,
+            AnalysisOutputOptions { fft_spectrum: true },
+        );
+
+        let spectrum = report.fft_spectrum.expect("expected fft spectrum");
+        assert_eq!(spectrum.frame_size, 2048);
+        assert!(spectrum.voiced_frame_count > 0);
+
+        let peak_bin = spectrum
+            .magnitudes
+            .iter()
+            .enumerate()
+            .skip(1)
+            .max_by(|left, right| left.1.total_cmp(right.1))
+            .map(|(index, _)| index)
+            .unwrap();
+        let peak_hz = peak_bin as f32 * spectrum.bin_hz;
+        assert!((peak_hz - 220.0).abs() < 20.0, "peak_hz = {}", peak_hz);
     }
 }

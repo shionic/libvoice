@@ -32,6 +32,7 @@ Enable or disable features explicitly:
 ```text
 /analyze +formants
 /analyze +energy -spectral
+/analyze +spectrum
 /analyze +all
 /analyze -all +pitch +hnr
 ```

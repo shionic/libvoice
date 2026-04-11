@@ -407,6 +407,7 @@ fn analyze_file_with_symphonia(path: &Path, args: &Args) -> Result<FileAnalysisO
         frames: voiced_frames.clone(),
         chunks,
         overall: analyzer.finalize(),
+        fft_spectrum: None,
     };
     let duration_seconds = processed_samples as f32 / sample_rate as f32;
 
@@ -493,6 +494,7 @@ fn analyze_file_with_ffmpeg(path: &Path, args: &Args) -> Result<FileAnalysisOutp
         frames: voiced_frames.clone(),
         chunks: vec![chunk],
         overall: analyzer.finalize(),
+        fft_spectrum: None,
     };
     let duration_seconds = samples.len() as f32 / sample_rate as f32;
 

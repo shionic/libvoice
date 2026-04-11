@@ -45,6 +45,7 @@ pub fn analyze_mono_f32(
                 frames: frames.clone(),
                 chunks: vec![chunk],
                 overall: analyzer.finalize(),
+                fft_spectrum: None,
             },
             frames,
         });

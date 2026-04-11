@@ -1,11 +1,19 @@
 use crate::config::AnalyzerConfig;
-use crate::model::{AnalysisReport, ChunkAnalysis, FrameAnalysis, FrameFeatures, OverallAnalysis};
+use crate::model::{
+    AnalysisReport, ChunkAnalysis, FftSpectrum, FrameAnalysis, FrameFeatures, OverallAnalysis,
+};
 use crate::signal::hann_window;
 use crate::spectral::FrameAnalyzer;
 use crate::summary::{summarize_chunk, summarize_overall};
 
+#[derive(Debug, Clone, Default)]
+pub struct AnalysisOutputOptions {
+    pub fft_spectrum: bool,
+}
+
 pub struct VoiceAnalyzer {
     config: AnalyzerConfig,
+    output_options: AnalysisOutputOptions,
     frame_analyzer: FrameAnalyzer,
     pending: Vec<f32>,
     pending_start: usize,
@@ -13,15 +21,34 @@ pub struct VoiceAnalyzer {
     next_chunk_index: usize,
     next_frame_index: usize,
     overall_frames: Vec<FrameFeatures>,
+    fft_spectrum_accumulator: Option<FftSpectrumAccumulator>,
+}
+
+#[derive(Debug, Clone)]
+struct FftSpectrumAccumulator {
+    summed_magnitudes: Vec<f32>,
+    voiced_frame_count: usize,
 }
 
 impl VoiceAnalyzer {
     pub fn new(config: AnalyzerConfig) -> Self {
+        Self::new_with_output_options(config, AnalysisOutputOptions::default())
+    }
+
+    pub fn new_with_output_options(
+        config: AnalyzerConfig,
+        output_options: AnalysisOutputOptions,
+    ) -> Self {
         let window = hann_window(config.frame_size);
         let frame_analyzer = FrameAnalyzer::new(config.clone(), window);
+        let fft_spectrum_accumulator = output_options.fft_spectrum.then(|| FftSpectrumAccumulator {
+            summed_magnitudes: vec![0.0; config.frame_size / 2 + 1],
+            voiced_frame_count: 0,
+        });
 
         Self {
             config,
+            output_options,
             frame_analyzer,
             pending: Vec::new(),
             pending_start: 0,
@@ -29,6 +56,7 @@ impl VoiceAnalyzer {
             next_chunk_index: 0,
             next_frame_index: 0,
             overall_frames: Vec::new(),
+            fft_spectrum_accumulator,
         }
     }
 
@@ -57,6 +85,7 @@ impl VoiceAnalyzer {
             let features = self.frame_analyzer.analyze(frame);
             self.pending_start += self.config.hop_size;
             if self.is_voiced_frame(&features) {
+                self.capture_fft_spectrum();
                 self.overall_frames.push(features.clone());
                 frame_features.push(features.clone());
                 let cumulative = summarize_overall(
@@ -92,7 +121,15 @@ impl VoiceAnalyzer {
     }
 
     pub fn analyze_buffer(config: AnalyzerConfig, samples: &[f32]) -> AnalysisReport {
-        let mut analyzer = Self::new(config);
+        Self::analyze_buffer_with_output_options(config, samples, AnalysisOutputOptions::default())
+    }
+
+    pub fn analyze_buffer_with_output_options(
+        config: AnalyzerConfig,
+        samples: &[f32],
+        output_options: AnalysisOutputOptions,
+    ) -> AnalysisReport {
+        let mut analyzer = Self::new_with_output_options(config, output_options);
         let (chunk, frames) = analyzer.process_chunk_with_frames(samples);
         let overall = analyzer.finalize();
         AnalysisReport {
@@ -100,6 +137,7 @@ impl VoiceAnalyzer {
             frames,
             chunks: vec![chunk],
             overall,
+            fft_spectrum: analyzer.finalize_fft_spectrum(),
         }
     }
 
@@ -108,7 +146,21 @@ impl VoiceAnalyzer {
         samples: &[f32],
         input_chunk_size: usize,
     ) -> AnalysisReport {
-        let mut analyzer = Self::new(config);
+        Self::analyze_buffer_in_chunks_with_output_options(
+            config,
+            samples,
+            input_chunk_size,
+            AnalysisOutputOptions::default(),
+        )
+    }
+
+    pub fn analyze_buffer_in_chunks_with_output_options(
+        config: AnalyzerConfig,
+        samples: &[f32],
+        input_chunk_size: usize,
+        output_options: AnalysisOutputOptions,
+    ) -> AnalysisReport {
+        let mut analyzer = Self::new_with_output_options(config, output_options);
         let mut chunks = Vec::new();
         let mut frames = Vec::new();
         for piece in samples.chunks(input_chunk_size.max(1)) {
@@ -122,6 +174,7 @@ impl VoiceAnalyzer {
             frames,
             chunks,
             overall,
+            fft_spectrum: analyzer.finalize_fft_spectrum(),
         }
     }
 
@@ -142,6 +195,46 @@ impl VoiceAnalyzer {
             && features.rms >= self.config.voiced_rms_threshold
             && features.spectral_flatness <= self.config.voiced_max_spectral_flatness
             && features.zcr <= self.config.voiced_max_zero_crossing_rate
+    }
+
+    fn capture_fft_spectrum(&mut self) {
+        if !self.output_options.fft_spectrum {
+            return;
+        }
+
+        let Some(accumulator) = self.fft_spectrum_accumulator.as_mut() else {
+            return;
+        };
+
+        for (sum, magnitude) in accumulator
+            .summed_magnitudes
+            .iter_mut()
+            .zip(self.frame_analyzer.magnitudes().iter().copied())
+        {
+            *sum += magnitude;
+        }
+        accumulator.voiced_frame_count += 1;
+    }
+
+    fn finalize_fft_spectrum(&self) -> Option<FftSpectrum> {
+        let accumulator = self.fft_spectrum_accumulator.as_ref()?;
+        if accumulator.voiced_frame_count == 0 {
+            return None;
+        }
+
+        let scale = 1.0 / accumulator.voiced_frame_count as f32;
+        let magnitudes = accumulator
+            .summed_magnitudes
+            .iter()
+            .map(|value| value * scale)
+            .collect();
+
+        Some(FftSpectrum {
+            frame_size: self.config.frame_size,
+            bin_hz: self.config.sample_rate as f32 / self.config.frame_size as f32,
+            voiced_frame_count: accumulator.voiced_frame_count,
+            magnitudes,
+        })
     }
 
     fn build_frame_analysis(

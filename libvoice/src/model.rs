@@ -27,6 +27,14 @@ pub struct SpectralSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FftSpectrum {
+    pub frame_size: usize,
+    pub bin_hz: f32,
+    pub voiced_frame_count: usize,
+    pub magnitudes: Vec<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FormantStats {
     pub frequency_hz: SummaryStats,
     pub bandwidth_hz: SummaryStats,
@@ -87,6 +95,7 @@ pub struct AnalysisReport {
     pub frames: Vec<FrameAnalysis>,
     pub chunks: Vec<ChunkAnalysis>,
     pub overall: OverallAnalysis,
+    pub fft_spectrum: Option<FftSpectrum>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

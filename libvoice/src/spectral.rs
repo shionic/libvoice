@@ -156,6 +156,10 @@ impl FrameAnalyzer {
             formants,
         }
     }
+
+    pub(crate) fn magnitudes(&self) -> &[f32] {
+        &self.magnitudes
+    }
 }
 
 fn estimate_spectral_tilt_db_per_octave(magnitudes: &[f32], bin_hz: f32) -> f32 {

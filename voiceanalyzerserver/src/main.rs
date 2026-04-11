@@ -173,6 +173,7 @@ async fn analyze_handler(
             frames: frames.clone(),
             chunks: vec![chunk],
             overall: analyzer.finalize(),
+            fft_spectrum: None,
         };
         (report, Some(frames))
     } else {
