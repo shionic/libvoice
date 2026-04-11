@@ -1,6 +1,7 @@
 use crate::config::AnalyzerConfig;
 use crate::model::{
-    AnalysisReport, ChunkAnalysis, FftSpectrum, FrameAnalysis, FrameFeatures, OverallAnalysis,
+    AnalysisReport, ChunkAnalysis, FftSpectrum, FftSpectrumFrame, FrameAnalysis, FrameFeatures,
+    OverallAnalysis,
 };
 use crate::signal::hann_window;
 use crate::spectral::FrameAnalyzer;
@@ -21,13 +22,7 @@ pub struct VoiceAnalyzer {
     next_chunk_index: usize,
     next_frame_index: usize,
     overall_frames: Vec<FrameFeatures>,
-    fft_spectrum_accumulator: Option<FftSpectrumAccumulator>,
-}
-
-#[derive(Debug, Clone)]
-struct FftSpectrumAccumulator {
-    summed_magnitudes: Vec<f32>,
-    voiced_frame_count: usize,
+    fft_spectrum_frames: Option<Vec<FftSpectrumFrame>>,
 }
 
 impl VoiceAnalyzer {
@@ -41,10 +36,7 @@ impl VoiceAnalyzer {
     ) -> Self {
         let window = hann_window(config.frame_size);
         let frame_analyzer = FrameAnalyzer::new(config.clone(), window);
-        let fft_spectrum_accumulator = output_options.fft_spectrum.then(|| FftSpectrumAccumulator {
-            summed_magnitudes: vec![0.0; config.frame_size / 2 + 1],
-            voiced_frame_count: 0,
-        });
+        let fft_spectrum_frames = output_options.fft_spectrum.then(Vec::new);
 
         Self {
             config,
@@ -56,7 +48,7 @@ impl VoiceAnalyzer {
             next_chunk_index: 0,
             next_frame_index: 0,
             overall_frames: Vec::new(),
-            fft_spectrum_accumulator,
+            fft_spectrum_frames,
         }
     }
 
@@ -84,8 +76,9 @@ impl VoiceAnalyzer {
                 &self.pending[self.pending_start..self.pending_start + self.config.frame_size];
             let features = self.frame_analyzer.analyze(frame);
             self.pending_start += self.config.hop_size;
-            if self.is_voiced_frame(&features) {
-                self.capture_fft_spectrum();
+            let is_voiced = self.is_voiced_frame(&features);
+            self.capture_fft_spectrum(frame_start_sample, is_voiced);
+            if is_voiced {
                 self.overall_frames.push(features.clone());
                 frame_features.push(features.clone());
                 let cumulative = summarize_overall(
@@ -197,43 +190,36 @@ impl VoiceAnalyzer {
             && features.zcr <= self.config.voiced_max_zero_crossing_rate
     }
 
-    fn capture_fft_spectrum(&mut self) {
+    fn capture_fft_spectrum(&mut self, frame_start_sample: usize, is_voiced: bool) {
         if !self.output_options.fft_spectrum {
             return;
         }
 
-        let Some(accumulator) = self.fft_spectrum_accumulator.as_mut() else {
+        let Some(frames) = self.fft_spectrum_frames.as_mut() else {
             return;
         };
 
-        for (sum, magnitude) in accumulator
-            .summed_magnitudes
-            .iter_mut()
-            .zip(self.frame_analyzer.magnitudes().iter().copied())
-        {
-            *sum += magnitude;
-        }
-        accumulator.voiced_frame_count += 1;
+        let sample_rate = self.config.sample_rate as f32;
+        let end_sample = frame_start_sample + self.config.frame_size;
+        frames.push(FftSpectrumFrame {
+            start_seconds: frame_start_sample as f32 / sample_rate,
+            end_seconds: end_sample as f32 / sample_rate,
+            is_voiced,
+            magnitudes: self.frame_analyzer.magnitudes().to_vec(),
+        });
     }
 
     fn finalize_fft_spectrum(&self) -> Option<FftSpectrum> {
-        let accumulator = self.fft_spectrum_accumulator.as_ref()?;
-        if accumulator.voiced_frame_count == 0 {
+        let frames = self.fft_spectrum_frames.as_ref()?;
+        if frames.is_empty() {
             return None;
         }
 
-        let scale = 1.0 / accumulator.voiced_frame_count as f32;
-        let magnitudes = accumulator
-            .summed_magnitudes
-            .iter()
-            .map(|value| value * scale)
-            .collect();
-
         Some(FftSpectrum {
             frame_size: self.config.frame_size,
+            hop_size: self.config.hop_size,
             bin_hz: self.config.sample_rate as f32 / self.config.frame_size as f32,
-            voiced_frame_count: accumulator.voiced_frame_count,
-            magnitudes,
+            frames: frames.clone(),
         })
     }
 

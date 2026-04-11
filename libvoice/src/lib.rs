@@ -11,8 +11,8 @@ pub use analyzer::VoiceAnalyzer;
 pub use analyzer::AnalysisOutputOptions;
 pub use config::AnalyzerConfig;
 pub use model::{
-    AnalysisReport, ChunkAnalysis, FftSpectrum, FormantStats, FormantSummary, FrameAnalysis,
-    JitterMetrics, OverallAnalysis, SpectralSummary, SummaryStats,
+    AnalysisReport, ChunkAnalysis, FftSpectrum, FftSpectrumFrame, FormantStats, FormantSummary,
+    FrameAnalysis, JitterMetrics, OverallAnalysis, SpectralSummary, SummaryStats,
 };
 
 #[cfg(test)]
@@ -82,9 +82,16 @@ mod tests {
 
         let spectrum = report.fft_spectrum.expect("expected fft spectrum");
         assert_eq!(spectrum.frame_size, 2048);
-        assert!(spectrum.voiced_frame_count > 0);
+        assert_eq!(spectrum.hop_size, 512);
+        assert!(!spectrum.frames.is_empty());
+        assert!(spectrum.frames.iter().any(|frame| frame.is_voiced));
 
-        let peak_bin = spectrum
+        let first_voiced = spectrum
+            .frames
+            .iter()
+            .find(|frame| frame.is_voiced)
+            .unwrap();
+        let peak_bin = first_voiced
             .magnitudes
             .iter()
             .enumerate()

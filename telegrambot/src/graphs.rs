@@ -1,6 +1,6 @@
 use image::codecs::png::PngEncoder;
 use image::{ColorType, ImageEncoder};
-use libvoice::{AnalysisReport, FftSpectrum, FrameAnalysis};
+use libvoice::{AnalysisReport, FrameAnalysis};
 use plotters::coord::types::RangedCoordf32;
 use plotters::prelude::*;
 
@@ -46,45 +46,35 @@ pub fn build_spectrum_graph(report: &AnalysisReport) -> Result<Option<GraphImage
     let Some(spectrum) = report.fft_spectrum.as_ref() else {
         return Ok(None);
     };
-    if spectrum.magnitudes.len() < 8 || spectrum.bin_hz <= 0.0 {
+    if spectrum.frames.is_empty() || spectrum.bin_hz <= 0.0 {
+        return Ok(None);
+    };
+
+    let bin_count = spectrum.frames[0].magnitudes.len();
+    if bin_count < 8 {
         return Ok(None);
     }
 
-    let nyquist_hz = (spectrum.magnitudes.len().saturating_sub(1)) as f32 * spectrum.bin_hz;
-    let min_hz = 50.0_f32.max(spectrum.bin_hz);
+    let nyquist_hz = (bin_count.saturating_sub(1)) as f32 * spectrum.bin_hz;
     let max_hz = nyquist_hz.min(5_000.0);
-    if max_hz <= min_hz {
+    let max_bin = (max_hz / spectrum.bin_hz).floor() as usize;
+    if max_bin < 8 {
         return Ok(None);
     }
 
-    let start_index = (min_hz / spectrum.bin_hz).ceil() as usize;
-    let end_index = (max_hz / spectrum.bin_hz).floor() as usize;
-    if end_index <= start_index {
-        return Ok(None);
+    let mut peak_db = f32::NEG_INFINITY;
+    for frame in &spectrum.frames {
+        for magnitude in frame.magnitudes.iter().take(max_bin + 1).skip(1) {
+            peak_db = peak_db.max(20.0 * magnitude.max(1.0e-12).log10());
+        }
     }
-
-    let smoothed = smooth_spectrum_magnitudes(spectrum, start_index, end_index);
-    let raw_points = spectrum_points_db(spectrum, start_index, end_index, &spectrum.magnitudes);
-    let smooth_points = spectrum_points_db(spectrum, start_index, end_index, &smoothed);
-    let peak_db = raw_points
-        .iter()
-        .chain(smooth_points.iter())
-        .map(|(_, value)| *value)
-        .fold(f32::NEG_INFINITY, f32::max);
     if !peak_db.is_finite() {
         return Ok(None);
     }
 
-    let normalize = |points: Vec<(f32, f32)>| -> Vec<(f32, f32)> {
-        points
-            .into_iter()
-            .map(|(x, y)| (x, (y - peak_db).max(-90.0)))
-            .collect()
-    };
-    let raw_points = normalize(raw_points);
-    let smooth_points = normalize(smooth_points);
-    let x_range = min_hz.log10()..max_hz.log10();
-    let y_range = -90.0_f32..3.0_f32;
+    let x_range = spectrum.frames[0].start_seconds
+        ..spectrum.frames.last().map(|frame| frame.end_seconds).unwrap_or(0.01);
+    let y_range = 0.0_f32..max_hz;
 
     let mut buffer = vec![255u8; (WIDTH * HEIGHT * 3) as usize];
     let root = BitMapBackend::with_buffer(&mut buffer, (WIDTH, HEIGHT)).into_drawing_area();
@@ -92,7 +82,7 @@ pub fn build_spectrum_graph(report: &AnalysisReport) -> Result<Option<GraphImage
 
     let mut chart = ChartBuilder::on(&root)
         .margin(24)
-        .caption("Voice spectrum", ("sans-serif", 34))
+        .caption("Voice spectrogram", ("sans-serif", 34))
         .x_label_area_size(56)
         .y_label_area_size(72)
         .build_cartesian_2d(x_range, y_range)
@@ -100,72 +90,53 @@ pub fn build_spectrum_graph(report: &AnalysisReport) -> Result<Option<GraphImage
 
     chart
         .configure_mesh()
-        .x_desc("Frequency (Hz)")
-        .y_desc("Level (dB rel. peak)")
-        .x_labels(10)
-        .x_label_formatter(&|value| format_frequency_label(10.0_f32.powf(*value)))
+        .x_desc("Time (s)")
+        .y_desc("Frequency (Hz)")
         .light_line_style(RGBColor(220, 220, 220))
         .draw()
         .map_err(draw_err)?;
 
-    chart
-        .draw_series(LineSeries::new(
-            raw_points,
-            RGBColor(120, 150, 200).mix(0.55).stroke_width(1),
-        ))
-        .map_err(draw_err)?
-        .label("Average FFT")
-        .legend(|(x, y)| {
-            PathElement::new(
-                vec![(x, y), (x + 24, y)],
-                RGBColor(120, 150, 200).mix(0.55).stroke_width(2),
-            )
-        });
-
-    chart
-        .draw_series(LineSeries::new(
-            smooth_points,
-            RGBColor(196, 45, 42).stroke_width(3),
-        ))
-        .map_err(draw_err)?
-        .label("Smoothed envelope")
-        .legend(|(x, y)| {
-            PathElement::new(
-                vec![(x, y), (x + 24, y)],
-                RGBColor(196, 45, 42).stroke_width(3),
-            )
-        });
-
-    if let Some(formants) = report.overall.formants.as_ref() {
-        for (label, color, formant) in [
-            ("F1", BLUE, formants.f1.as_ref()),
-            ("F2", GREEN, formants.f2.as_ref()),
-            ("F3", MAGENTA, formants.f3.as_ref()),
-            ("F4", CYAN, formants.f4.as_ref()),
-        ] {
-            let Some(formant) = formant else {
-                continue;
-            };
-            let hz = formant.frequency_hz.mean;
-            if hz < min_hz || hz > max_hz {
-                continue;
-            }
-            let x = hz.log10();
-            chart
-                .draw_series(std::iter::once(PathElement::new(
-                    vec![(x, -90.0), (x, 3.0)],
-                    color.mix(0.55),
-                )))
-                .map_err(draw_err)?
-                .label(label)
-                .legend(move |(x, y)| PathElement::new(vec![(x, y - 4), (x, y + 4)], color));
+    for frame in &spectrum.frames {
+        let top_bin = max_bin.min(frame.magnitudes.len().saturating_sub(1));
+        if top_bin < 1 {
+            continue;
         }
+
+        for bin in 1..=top_bin {
+            let lower_hz = (bin - 1) as f32 * spectrum.bin_hz;
+            let upper_hz = bin as f32 * spectrum.bin_hz;
+            let db = 20.0 * frame.magnitudes[bin].max(1.0e-12).log10();
+            let normalized = ((db - peak_db + 80.0) / 80.0).clamp(0.0, 1.0);
+            let color = spectrogram_color(normalized, frame.is_voiced);
+            chart
+                .draw_series(std::iter::once(Rectangle::new(
+                    [
+                        (frame.start_seconds, lower_hz),
+                        (frame.end_seconds, upper_hz),
+                    ],
+                    color.filled(),
+                )))
+                .map_err(draw_err)?;
+        }
+    }
+
+    for segment in segmented_optional_series(
+        report
+            .frames
+            .iter()
+            .map(|frame| (frame.start_seconds, frame.pitch_hz)),
+    ) {
+        chart
+            .draw_series(LineSeries::new(segment, WHITE.stroke_width(2)))
+            .map_err(draw_err)?
+            .label("Pitch")
+            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 24, y)], WHITE.stroke_width(2)));
     }
 
     chart
         .configure_series_labels()
-        .background_style(WHITE.mix(0.9))
-        .border_style(BLACK)
+        .background_style(BLACK.mix(0.55))
+        .border_style(WHITE)
         .draw()
         .map_err(draw_err)?;
 
@@ -174,8 +145,8 @@ pub fn build_spectrum_graph(report: &AnalysisReport) -> Result<Option<GraphImage
     drop(root);
 
     Ok(Some(GraphImage {
-        file_name: "voice_spectrum.png".to_string(),
-        title: "Voice spectrum".to_string(),
+        file_name: "voice_spectrogram.png".to_string(),
+        title: "Voice spectrogram".to_string(),
         png_bytes: encode_png(buffer, WIDTH, HEIGHT)?,
     }))
 }
@@ -513,59 +484,44 @@ where
     })
 }
 
-fn smooth_spectrum_magnitudes(
-    spectrum: &FftSpectrum,
-    start_index: usize,
-    end_index: usize,
-) -> Vec<f32> {
-    let mut smoothed = spectrum.magnitudes.clone();
-    for index in start_index..=end_index {
-        let radius = (index / 24).max(2);
-        let low = index.saturating_sub(radius).max(1);
-        let high = (index + radius).min(spectrum.magnitudes.len().saturating_sub(1));
-        let mut sum = 0.0_f32;
-        let mut weight_sum = 0.0_f32;
-
-        for inner in low..=high {
-            let distance = index.abs_diff(inner) as f32;
-            let weight = 1.0 / (1.0 + distance);
-            sum += spectrum.magnitudes[inner] * weight;
-            weight_sum += weight;
-        }
-
-        if weight_sum > 0.0 {
-            smoothed[index] = sum / weight_sum;
-        }
-    }
-    smoothed
-}
-
-fn spectrum_points_db(
-    spectrum: &FftSpectrum,
-    start_index: usize,
-    end_index: usize,
-    magnitudes: &[f32],
-) -> Vec<(f32, f32)> {
-    (start_index..=end_index)
-        .map(|index| {
-            let hz = index as f32 * spectrum.bin_hz;
-            let db = 20.0 * magnitudes[index].max(1.0e-12).log10();
-            (hz.log10(), db)
-        })
-        .collect()
-}
-
-fn format_frequency_label(hz: f32) -> String {
-    if hz >= 1000.0 {
-        let khz = hz / 1000.0;
-        if khz >= 10.0 || (khz - khz.round()).abs() < 0.05 {
-            format!("{khz:.0}k")
-        } else {
-            format!("{khz:.1}k")
-        }
+fn spectrogram_color(level: f32, is_voiced: bool) -> RGBColor {
+    let anchors = if is_voiced {
+        [
+            (8.0, 12.0, 24.0),
+            (35.0, 50.0, 110.0),
+            (45.0, 135.0, 185.0),
+            (245.0, 180.0, 65.0),
+            (255.0, 246.0, 220.0),
+        ]
     } else {
-        format!("{hz:.0}")
+        [
+            (8.0, 10.0, 16.0),
+            (20.0, 26.0, 40.0),
+            (40.0, 54.0, 74.0),
+            (100.0, 110.0, 120.0),
+            (180.0, 188.0, 196.0),
+        ]
+    };
+    gradient_color(level, &anchors)
+}
+
+fn gradient_color(level: f32, anchors: &[(f32, f32, f32); 5]) -> RGBColor {
+    let scaled = level.clamp(0.0, 1.0) * (anchors.len() - 1) as f32;
+    let left = scaled.floor() as usize;
+    let right = scaled.ceil() as usize;
+    if left == right {
+        let (r, g, b) = anchors[left];
+        return RGBColor(r as u8, g as u8, b as u8);
     }
+
+    let mix = scaled - left as f32;
+    let (lr, lg, lb) = anchors[left];
+    let (rr, rg, rb) = anchors[right];
+    RGBColor(
+        (lr + (rr - lr) * mix).round() as u8,
+        (lg + (rg - lg) * mix).round() as u8,
+        (lb + (rb - lb) * mix).round() as u8,
+    )
 }
 
 fn segmented_optional_series<I>(iter: I) -> Vec<Vec<(f32, f32)>>

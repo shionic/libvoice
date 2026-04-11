@@ -29,8 +29,16 @@ pub struct SpectralSummary {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FftSpectrum {
     pub frame_size: usize,
+    pub hop_size: usize,
     pub bin_hz: f32,
-    pub voiced_frame_count: usize,
+    pub frames: Vec<FftSpectrumFrame>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FftSpectrumFrame {
+    pub start_seconds: f32,
+    pub end_seconds: f32,
+    pub is_voiced: bool,
     pub magnitudes: Vec<f32>,
 }
 
