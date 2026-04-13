@@ -33,13 +33,12 @@ impl PitchAnalyzer {
         }
 
         self.centered.resize(frame_len, 0.0);
-        self.centered[..frame_len].copy_from_slice(frame);
         let centered = &mut self.centered[..frame_len];
-        let reduced_sum: f32 = centered.iter().copied().sum();
+        let reduced_sum: f32 = frame.iter().copied().sum();
 
         let mean = reduced_sum / frame_len as f32;
-        for sample in centered {
-            *sample -= mean;
+        for (dst, &sample) in centered.iter_mut().zip(frame.iter()) {
+            *dst = sample - mean;
         }
 
         let min_lag = (sample_rate as f32 / max_pitch_hz).floor().max(1.0) as usize;
@@ -54,13 +53,10 @@ impl PitchAnalyzer {
         self.difference[0] = 0.0;
         self.cmndf[0] = 1.0;
 
+        let centered = &self.centered[..frame_len];
         for lag in 1..=upper_lag {
-            let mut value = 0.0_f32;
-            for index in 0..(frame_len - lag) {
-                let delta = self.centered[index] - self.centered[index + lag];
-                value += delta * delta;
-            }
-            self.difference[lag] = value;
+            self.difference[lag] =
+                squared_difference_sum(&centered[..frame_len - lag], &centered[lag..]);
         }
 
         let mut running_sum = 0.0_f32;
@@ -161,20 +157,102 @@ fn normalized_autocorrelation(signal: &[f32], lag: usize) -> f32 {
         return 0.0;
     }
 
-    let mut dot = 0.0_f32;
-    let mut energy_a = 0.0_f32;
-    let mut energy_b = 0.0_f32;
-    for index in 0..(signal.len() - lag) {
-        let a = signal[index];
-        let b = signal[index + lag];
-        dot += a * b;
-        energy_a += a * a;
-        energy_b += b * b;
-    }
+    let overlap = &signal[..signal.len() - lag];
+    let shifted = &signal[lag..];
+    let (dot, energy_a, energy_b) = correlation_sums(overlap, shifted);
 
     if energy_a <= 1.0e-12 || energy_b <= 1.0e-12 {
         0.0
     } else {
         (dot / (energy_a.sqrt() * energy_b.sqrt())).clamp(0.0, 1.0)
     }
+}
+
+fn squared_difference_sum(left: &[f32], right: &[f32]) -> f32 {
+    debug_assert_eq!(left.len(), right.len());
+
+    let mut sum0 = 0.0_f32;
+    let mut sum1 = 0.0_f32;
+    let mut sum2 = 0.0_f32;
+    let mut sum3 = 0.0_f32;
+
+    let mut left_chunks = left.chunks_exact(4);
+    let mut right_chunks = right.chunks_exact(4);
+
+    for (left_chunk, right_chunk) in left_chunks.by_ref().zip(right_chunks.by_ref()) {
+        let delta0 = left_chunk[0] - right_chunk[0];
+        let delta1 = left_chunk[1] - right_chunk[1];
+        let delta2 = left_chunk[2] - right_chunk[2];
+        let delta3 = left_chunk[3] - right_chunk[3];
+        sum0 += delta0 * delta0;
+        sum1 += delta1 * delta1;
+        sum2 += delta2 * delta2;
+        sum3 += delta3 * delta3;
+    }
+
+    let mut sum = (sum0 + sum1) + (sum2 + sum3);
+    for (&a, &b) in left_chunks.remainder().iter().zip(right_chunks.remainder().iter()) {
+        let delta = a - b;
+        sum += delta * delta;
+    }
+
+    sum
+}
+
+fn correlation_sums(left: &[f32], right: &[f32]) -> (f32, f32, f32) {
+    debug_assert_eq!(left.len(), right.len());
+
+    let mut dot0 = 0.0_f32;
+    let mut dot1 = 0.0_f32;
+    let mut dot2 = 0.0_f32;
+    let mut dot3 = 0.0_f32;
+    let mut energy_a0 = 0.0_f32;
+    let mut energy_a1 = 0.0_f32;
+    let mut energy_a2 = 0.0_f32;
+    let mut energy_a3 = 0.0_f32;
+    let mut energy_b0 = 0.0_f32;
+    let mut energy_b1 = 0.0_f32;
+    let mut energy_b2 = 0.0_f32;
+    let mut energy_b3 = 0.0_f32;
+
+    let mut left_chunks = left.chunks_exact(4);
+    let mut right_chunks = right.chunks_exact(4);
+
+    for (left_chunk, right_chunk) in left_chunks.by_ref().zip(right_chunks.by_ref()) {
+        let a0 = left_chunk[0];
+        let a1 = left_chunk[1];
+        let a2 = left_chunk[2];
+        let a3 = left_chunk[3];
+        let b0 = right_chunk[0];
+        let b1 = right_chunk[1];
+        let b2 = right_chunk[2];
+        let b3 = right_chunk[3];
+
+        dot0 += a0 * b0;
+        dot1 += a1 * b1;
+        dot2 += a2 * b2;
+        dot3 += a3 * b3;
+
+        energy_a0 += a0 * a0;
+        energy_a1 += a1 * a1;
+        energy_a2 += a2 * a2;
+        energy_a3 += a3 * a3;
+
+        energy_b0 += b0 * b0;
+        energy_b1 += b1 * b1;
+        energy_b2 += b2 * b2;
+        energy_b3 += b3 * b3;
+    }
+
+    let mut dot = (dot0 + dot1) + (dot2 + dot3);
+    let mut energy_a = (energy_a0 + energy_a1) + (energy_a2 + energy_a3);
+    let mut energy_b = (energy_b0 + energy_b1) + (energy_b2 + energy_b3);
+
+    for (&a, &b) in left_chunks.remainder().iter().zip(right_chunks.remainder().iter()) {
+        dot += a * b;
+        energy_a += a * a;
+        energy_b += b * b;
+    }
+
+    (dot, energy_a, energy_b)
 }
