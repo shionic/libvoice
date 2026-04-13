@@ -15,6 +15,14 @@ pub struct GraphImage {
     pub png_bytes: Vec<u8>,
 }
 
+fn spectrum_display_max_hz(report: &AnalysisReport, spectrum: &libvoice::FftSpectrum) -> f32 {
+    let nyquist_hz = (spectrum.frames[0].magnitudes.len().saturating_sub(1)) as f32 * spectrum.bin_hz;
+    report
+        .config
+        .max_harmonic_frequency_hz
+        .min(nyquist_hz)
+}
+
 pub fn generate_graphs(report: &AnalysisReport) -> Result<Vec<GraphImage>, String> {
     let frames = &report.frames;
     if frames.is_empty() {
@@ -55,8 +63,7 @@ pub fn build_spectrum_graph(report: &AnalysisReport) -> Result<Option<GraphImage
         return Ok(None);
     }
 
-    let nyquist_hz = (bin_count.saturating_sub(1)) as f32 * spectrum.bin_hz;
-    let max_hz = nyquist_hz.min(5_000.0);
+    let max_hz = spectrum_display_max_hz(report, spectrum);
     let max_bin = (max_hz / spectrum.bin_hz).floor() as usize;
     if max_bin < 8 {
         return Ok(None);
@@ -163,8 +170,7 @@ pub fn build_spectrum_feature_graphs(report: &AnalysisReport) -> Result<Vec<Grap
         return Ok(Vec::new());
     }
 
-    let nyquist_hz = (bin_count.saturating_sub(1)) as f32 * spectrum.bin_hz;
-    let max_hz = nyquist_hz.min(5_000.0);
+    let max_hz = spectrum_display_max_hz(report, spectrum);
     let max_bin = (max_hz / spectrum.bin_hz).floor() as usize;
     if max_bin < 8 {
         return Ok(Vec::new());
@@ -249,7 +255,11 @@ fn build_harmonics_graph(report: &AnalysisReport) -> Result<Option<GraphImage>, 
     let display_ceiling = harmonic_display_ceiling(&total_strengths);
     let y_range = 0.0_f32..display_ceiling;
     let runs = voiced_runs(frames);
-    let legend_harmonics = strongest_harmonic_legend_entries(report, false, 5_000.0);
+    let legend_harmonics = strongest_harmonic_legend_entries(
+        report,
+        false,
+        report.config.max_harmonic_frequency_hz,
+    );
 
     render_graph(
         "Harmonic stack",

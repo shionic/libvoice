@@ -5,6 +5,7 @@ use wasm_bindgen::prelude::*;
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AnalyzerConfigPatch {
+    high_pitch_mode: Option<bool>,
     frame_size: Option<usize>,
     hop_size: Option<usize>,
     min_pitch_hz: Option<f32>,
@@ -103,6 +104,10 @@ fn build_config(sample_rate: u32, options: Option<JsValue>) -> Result<AnalyzerCo
         }
         _ => AnalyzerConfigPatch::default(),
     };
+
+    if patch.high_pitch_mode.unwrap_or(false) {
+        config.apply_high_pitch_mode();
+    }
 
     if let Some(frame_size) = patch.frame_size {
         if frame_size < 8 {

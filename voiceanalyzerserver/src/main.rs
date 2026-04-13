@@ -45,6 +45,8 @@ struct AnalyzeQuery {
     #[serde(default)]
     include_frames: bool,
     #[serde(default)]
+    high_pitch_mode: bool,
+    #[serde(default)]
     pcm_encoding: Option<PcmEncoding>,
     sample_rate: Option<u32>,
     #[serde(default)]
@@ -294,6 +296,9 @@ async fn stream_handler(
 
 fn build_config(sample_rate: u32, query: &AnalyzeQuery) -> Result<AnalyzerConfig, ApiError> {
     let mut config = AnalyzerConfig::new(sample_rate);
+    if query.high_pitch_mode {
+        config.apply_high_pitch_mode();
+    }
 
     if let Some(frame_size) = query.frame_size {
         if frame_size < 8 {

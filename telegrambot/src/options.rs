@@ -6,6 +6,7 @@ pub struct AnalyzeOptions {
     pub spectrum: bool,
     pub energy: bool,
     pub harmonics: bool,
+    pub high_pitch_mode: bool,
     pub graph: bool,
     pub clip: Option<ClipSpec>,
 }
@@ -37,6 +38,7 @@ impl Default for AnalyzeOptions {
             spectrum: false,
             energy: false,
             harmonics: false,
+            high_pitch_mode: false,
             graph: false,
             clip: None,
         }
@@ -68,6 +70,7 @@ pub fn parse_analyze_options(text: &str) -> Result<AnalyzeOptions, String> {
             "spectrum" => options.spectrum = enabled,
             "energy" => options.energy = enabled,
             "harmonics" | "formants" => options.harmonics = enabled,
+            "high-pitch" | "high_pitch" => options.high_pitch_mode = enabled,
             "graph" => options.graph = enabled,
             "from" => {
                 if !enabled {
@@ -107,7 +110,7 @@ pub fn parse_analyze_options(text: &str) -> Result<AnalyzeOptions, String> {
             }
             _ => {
                 return Err(format!(
-                    "Unknown feature `{token}`.\nUse: +/-pitch, +/-hnr, +/-spectral, +/-spectrum, +/-energy, +/-harmonics, +/-graph, +/-all, +from, +to, +dur"
+                    "Unknown feature `{token}`.\nUse: +/-pitch, +/-hnr, +/-spectral, +/-spectrum, +/-energy, +/-harmonics, +/-high-pitch, +/-graph, +/-all, +from, +to, +dur"
                 ));
             }
         }
@@ -141,7 +144,7 @@ pub fn parse_analyze_options(text: &str) -> Result<AnalyzeOptions, String> {
 }
 
 pub fn analyze_usage_hint() -> &'static str {
-    "Reply to a voice message or audio file with <code>/analyze</code>.\nDefault sections: <code>+pitch +hnr +spectral</code>\nExtra features: <code>+harmonics +energy +graph +spectrum</code>\nClip syntax: <code>+from 20s +to 1m40s</code> or <code>+from 20s +dur 20s</code>\nExample: <code>/analyze +graph +spectrum +from 20s +dur 20s -spectral</code>"
+    "Reply to a voice message or audio file with <code>/analyze</code>.\nDefault sections: <code>+pitch +hnr +spectral</code>\nExtra features: <code>+harmonics +energy +graph +spectrum +high-pitch</code>\nClip syntax: <code>+from 20s +to 1m40s</code> or <code>+from 20s +dur 20s</code>\nExample: <code>/analyze +high-pitch +graph +spectrum +from 20s +dur 20s -spectral</code>"
 }
 
 impl ClipSpec {
@@ -266,5 +269,14 @@ mod tests {
     fn rejects_from_without_end() {
         let error = parse_analyze_options("/analyze +from 10s").unwrap_err();
         assert!(error.contains("requires either `+to` or `+dur`"));
+    }
+
+    #[test]
+    fn parses_high_pitch_without_adding_it_to_all() {
+        let high_pitch = parse_analyze_options("/analyze +high-pitch").unwrap();
+        assert!(high_pitch.high_pitch_mode);
+
+        let all = parse_analyze_options("/analyze +all").unwrap();
+        assert!(!all.high_pitch_mode);
     }
 }

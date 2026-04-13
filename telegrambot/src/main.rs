@@ -118,7 +118,7 @@ async fn handle_message(bot: Bot, msg: Message) -> Result<(), String> {
             Some(clip) => clip_audio_seconds(&decoded, clip.from_seconds, clip.to_seconds)?,
             None => decoded,
         };
-        let report = analyze_samples(&analysis_audio, options.spectrum);
+        let report = analyze_samples(&analysis_audio, options.spectrum, options.high_pitch_mode);
         let report_label = format_report_label(&input.label, resolved_clip.as_ref());
         let report_text = format_report(&report_label, &analysis_audio, &report, &options);
         let mut graphs = if options.graph {

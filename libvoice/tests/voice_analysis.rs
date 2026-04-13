@@ -134,6 +134,74 @@ fn pitch_tracks_multiple_stable_frequencies() {
 }
 
 #[test]
+fn high_pitch_mode_tracks_high_voice_fundamentals() {
+    let sample_rate = 16_000;
+    let mut config = AnalyzerConfig::new(sample_rate);
+    config.apply_high_pitch_mode();
+
+    let samples = synth_sine(sample_rate, 1_000.0, 1.0, 0.5);
+    let report = VoiceAnalyzer::analyze_buffer(config, &samples);
+    let pitch = report
+        .overall
+        .pitch_hz
+        .expect("high-pitch mode should keep 1000 Hz voiced");
+
+    approx_eq(pitch.mean, 1_000.0, 25.0);
+}
+
+#[test]
+fn high_pitch_mode_preserves_harmonic_detection_near_upper_pitch_limit() {
+    let sample_rate = 16_000;
+    let mut config = AnalyzerConfig::new(sample_rate);
+    config.apply_high_pitch_mode();
+
+    let samples = synth_harmonic_stack(sample_rate, 900.0, 1.0, &[1.0, 0.45, 0.25, 0.12, 0.06]);
+    let report = VoiceAnalyzer::analyze_buffer(config, &samples);
+
+    let pitch = report
+        .overall
+        .pitch_hz
+        .expect("high-pitch harmonic stack should remain voiced");
+    approx_eq(pitch.mean, 900.0, 20.0);
+
+    let harmonics = report
+        .overall
+        .harmonics
+        .expect("high-pitch mode should still expose harmonics");
+
+    let h2 = harmonics
+        .harmonics
+        .iter()
+        .find(|harmonic| harmonic.harmonic_number == 2)
+        .expect("expected H2 below 5000 Hz");
+    let h3 = harmonics
+        .harmonics
+        .iter()
+        .find(|harmonic| harmonic.harmonic_number == 3)
+        .expect("expected H3 below 5000 Hz");
+    let h4 = harmonics
+        .harmonics
+        .iter()
+        .find(|harmonic| harmonic.harmonic_number == 4)
+        .expect("expected H4 below 5000 Hz");
+    let h5 = harmonics
+        .harmonics
+        .iter()
+        .find(|harmonic| harmonic.harmonic_number == 5)
+        .expect("expected H5 when high-pitch mode raises the harmonic cap");
+
+    approx_eq(h2.strength_ratio.mean, 0.45, 0.14);
+    approx_eq(h3.strength_ratio.mean, 0.25, 0.12);
+    approx_eq(h4.strength_ratio.mean, 0.12, 0.08);
+    approx_eq(h5.strength_ratio.mean, 0.06, 0.05);
+    assert!(harmonics.max_frequency_hz > 5_000.0);
+    assert!(
+        harmonics.harmonics.iter().all(|harmonic| harmonic.harmonic_number <= 8),
+        "900 Hz F0 with a raised cap should still be bounded by Nyquist"
+    );
+}
+
+#[test]
 fn streaming_matches_full_buffer_metrics_across_irregular_chunks() {
     let sample_rate = 16_000;
     let config = AnalyzerConfig::new(sample_rate);

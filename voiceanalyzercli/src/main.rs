@@ -57,6 +57,9 @@ struct Args {
     #[arg(long, default_value_t = 0.60)]
     pitch_clarity_threshold: f32,
 
+    #[arg(long, default_value_t = false)]
+    high_pitch_mode: bool,
+
     #[arg(long, default_value_t = 0.85)]
     rolloff_ratio: f32,
 
@@ -548,6 +551,9 @@ fn probe_sample_rate_with_ffprobe(path: &Path) -> Result<u32, String> {
 
 fn build_config(sample_rate: u32, args: &Args) -> AnalyzerConfig {
     let mut config = AnalyzerConfig::new(sample_rate);
+    if args.high_pitch_mode {
+        config.apply_high_pitch_mode();
+    }
     config.frame_size = args.frame_size;
     config.hop_size = args.hop_size;
     config.min_pitch_hz = args.min_pitch_hz;

@@ -29,8 +29,15 @@ pub fn decode_audio_bytes(bytes: &[u8], file_name: Option<&str>) -> Result<Decod
     }
 }
 
-pub fn analyze_samples(decoded: &DecodedAudio, include_fft_spectrum: bool) -> AnalysisReport {
-    let config = AnalyzerConfig::new(decoded.sample_rate);
+pub fn analyze_samples(
+    decoded: &DecodedAudio,
+    include_fft_spectrum: bool,
+    high_pitch_mode: bool,
+) -> AnalysisReport {
+    let mut config = AnalyzerConfig::new(decoded.sample_rate);
+    if high_pitch_mode {
+        config.apply_high_pitch_mode();
+    }
     VoiceAnalyzer::analyze_buffer_with_output_options(
         config,
         &decoded.samples,

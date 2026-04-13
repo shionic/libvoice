@@ -35,6 +35,23 @@ impl AnalyzerConfig {
         }
     }
 
+    pub fn apply_high_pitch_mode(&mut self) {
+        self.max_pitch_hz = 1_200.0;
+        self.max_harmonic_frequency_hz = self.max_harmonic_frequency_hz.max(
+            recommended_high_pitch_harmonic_cap_hz(
+                self.sample_rate,
+                self.frame_size,
+                self.max_pitch_hz,
+            ),
+        );
+        self.voiced_max_zero_crossing_rate = self
+            .voiced_max_zero_crossing_rate
+            .max(recommended_voiced_max_zero_crossing_rate(
+                self.sample_rate,
+                self.max_pitch_hz,
+            ));
+    }
+
     pub fn frame_step_seconds(&self) -> f32 {
         self.hop_size as f32 / self.sample_rate as f32
     }
@@ -50,6 +67,29 @@ fn default_window_sizes(sample_rate: u32) -> (usize, usize) {
     };
 
     (frame_size, frame_size / 4)
+}
+
+fn recommended_voiced_max_zero_crossing_rate(sample_rate: u32, max_pitch_hz: f32) -> f32 {
+    if sample_rate == 0 || max_pitch_hz <= 0.0 {
+        return 0.25;
+    }
+
+    (((2.0 * max_pitch_hz / sample_rate as f32) * 1.8) + 0.03).clamp(0.25, 0.40)
+}
+
+fn recommended_high_pitch_harmonic_cap_hz(
+    sample_rate: u32,
+    frame_size: usize,
+    max_pitch_hz: f32,
+) -> f32 {
+    if sample_rate == 0 || frame_size == 0 || max_pitch_hz <= 0.0 {
+        return 5_000.0;
+    }
+
+    let nyquist_hz = sample_rate as f32 * 0.5;
+    let bin_hz = sample_rate as f32 / frame_size as f32;
+    let desired_cap_hz = (max_pitch_hz * 6.0).max(5_000.0);
+    desired_cap_hz.min((nyquist_hz - 2.0 * bin_hz).max(max_pitch_hz))
 }
 
 impl Default for AnalyzerConfig {

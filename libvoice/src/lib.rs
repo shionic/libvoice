@@ -118,4 +118,16 @@ mod tests {
         assert!((low_bin_hz - 7.8125).abs() < 1.0e-6);
         assert!((high_bin_hz - low_bin_hz).abs() < 1.0e-6);
     }
+
+    #[test]
+    fn high_pitch_mode_expands_pitch_range_and_voiced_zcr_limit() {
+        let mut config = AnalyzerConfig::new(16_000);
+        config.apply_high_pitch_mode();
+
+        assert_eq!(config.max_pitch_hz, 1_200.0);
+        assert!(config.max_harmonic_frequency_hz > 5_000.0);
+        assert!(config.max_harmonic_frequency_hz <= 8_000.0);
+        assert!(config.voiced_max_zero_crossing_rate >= 0.30);
+        assert!(config.voiced_max_zero_crossing_rate <= 0.40);
+    }
 }
