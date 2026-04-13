@@ -541,9 +541,17 @@ fn probe_sample_rate_with_ffprobe(path: &Path) -> Result<u32, String> {
     let sample_rate = String::from_utf8_lossy(&output.stdout)
         .trim()
         .parse::<u32>()
-        .map_err(|error| format!("{}: failed to parse ffprobe sample rate: {error}", path.display()))?;
+        .map_err(|error| {
+            format!(
+                "{}: failed to parse ffprobe sample rate: {error}",
+                path.display()
+            )
+        })?;
     if sample_rate == 0 {
-        return Err(format!("{}: ffprobe reported a zero sample rate", path.display()));
+        return Err(format!(
+            "{}: ffprobe reported a zero sample rate",
+            path.display()
+        ));
     }
 
     Ok(sample_rate)
@@ -742,9 +750,7 @@ fn format_optional_value(value: Option<f32>) -> String {
 fn format_optional_series(values: &[Option<f32>]) -> String {
     values
         .iter()
-        .map(|value| {
-            value.map(format_value).unwrap_or_else(|| "-".to_string())
-        })
+        .map(|value| value.map(format_value).unwrap_or_else(|| "-".to_string()))
         .collect::<Vec<_>>()
         .join(", ")
 }

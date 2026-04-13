@@ -42,9 +42,7 @@ impl PitchAnalyzer {
             *sample -= mean;
         }
 
-        let min_lag = (sample_rate as f32 / max_pitch_hz)
-            .floor()
-            .max(1.0) as usize;
+        let min_lag = (sample_rate as f32 / max_pitch_hz).floor().max(1.0) as usize;
         let max_lag = (sample_rate as f32 / min_pitch_hz).ceil() as usize;
         if frame_len <= max_lag + 1 {
             return None;

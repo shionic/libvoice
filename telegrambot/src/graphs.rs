@@ -16,11 +16,9 @@ pub struct GraphImage {
 }
 
 fn spectrum_display_max_hz(report: &AnalysisReport, spectrum: &libvoice::FftSpectrum) -> f32 {
-    let nyquist_hz = (spectrum.frames[0].magnitudes.len().saturating_sub(1)) as f32 * spectrum.bin_hz;
-    report
-        .config
-        .max_harmonic_frequency_hz
-        .min(nyquist_hz)
+    let nyquist_hz =
+        (spectrum.frames[0].magnitudes.len().saturating_sub(1)) as f32 * spectrum.bin_hz;
+    report.config.max_harmonic_frequency_hz.min(nyquist_hz)
 }
 
 pub fn generate_graphs(report: &AnalysisReport) -> Result<Vec<GraphImage>, String> {
@@ -80,7 +78,11 @@ pub fn build_spectrum_graph(report: &AnalysisReport) -> Result<Option<GraphImage
     }
 
     let x_range = spectrum.frames[0].start_seconds
-        ..spectrum.frames.last().map(|frame| frame.end_seconds).unwrap_or(0.01);
+        ..spectrum
+            .frames
+            .last()
+            .map(|frame| frame.end_seconds)
+            .unwrap_or(0.01);
     let y_range = 0.0_f32..max_hz;
 
     let mut buffer = vec![255u8; (WIDTH * HEIGHT * 3) as usize];
@@ -129,13 +131,16 @@ pub fn build_spectrum_graph(report: &AnalysisReport) -> Result<Option<GraphImage
 
     for run in voiced_runs(&report.frames) {
         for segment in segmented_optional_series(
-            run.iter().map(|frame| (frame.start_seconds, frame.pitch_hz)),
+            run.iter()
+                .map(|frame| (frame.start_seconds, frame.pitch_hz)),
         ) {
-        chart
-            .draw_series(LineSeries::new(segment, WHITE.stroke_width(2)))
-            .map_err(draw_err)?
-            .label("Pitch")
-            .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 24, y)], WHITE.stroke_width(2)));
+            chart
+                .draw_series(LineSeries::new(segment, WHITE.stroke_width(2)))
+                .map_err(draw_err)?
+                .label("Pitch")
+                .legend(|(x, y)| {
+                    PathElement::new(vec![(x, y), (x + 24, y)], WHITE.stroke_width(2))
+                });
         }
     }
 
@@ -255,11 +260,8 @@ fn build_harmonics_graph(report: &AnalysisReport) -> Result<Option<GraphImage>, 
     let display_ceiling = harmonic_display_ceiling(&total_strengths);
     let y_range = 0.0_f32..display_ceiling;
     let runs = voiced_runs(frames);
-    let legend_harmonics = strongest_harmonic_legend_entries(
-        report,
-        false,
-        report.config.max_harmonic_frequency_hz,
-    );
+    let legend_harmonics =
+        strongest_harmonic_legend_entries(report, false, report.config.max_harmonic_frequency_hz);
 
     render_graph(
         "Harmonic stack",
@@ -342,10 +344,7 @@ fn build_harmonics_graph(report: &AnalysisReport) -> Result<Option<GraphImage>, 
                 .legend({
                     let color = harmonic_fill_color(1, max_harmonics);
                     move |(x, y)| {
-                        Rectangle::new(
-                            [(x, y - 4), (x + 24, y + 4)],
-                            color.mix(0.26).filled(),
-                        )
+                        Rectangle::new([(x, y - 4), (x + 24, y + 4)], color.mix(0.26).filled())
                     }
                 });
             chart
@@ -354,7 +353,9 @@ fn build_harmonics_graph(report: &AnalysisReport) -> Result<Option<GraphImage>, 
                     BLACK.stroke_width(2),
                 )))?
                 .label("Total (H2+)")
-                .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 24, y)], BLACK.stroke_width(2)));
+                .legend(|(x, y)| {
+                    PathElement::new(vec![(x, y), (x + 24, y)], BLACK.stroke_width(2))
+                });
             for entry in &legend_harmonics {
                 chart
                     .draw_series(std::iter::once(PathElement::new(
@@ -364,7 +365,9 @@ fn build_harmonics_graph(report: &AnalysisReport) -> Result<Option<GraphImage>, 
                     .label(entry.label.clone())
                     .legend({
                         let color = entry.color;
-                        move |(x, y)| PathElement::new(vec![(x, y), (x + 24, y)], color.stroke_width(3))
+                        move |(x, y)| {
+                            PathElement::new(vec![(x, y), (x + 24, y)], color.stroke_width(3))
+                        }
                     });
             }
             Ok(())
@@ -420,7 +423,11 @@ fn harmonic_fill_color(harmonic_index: usize, harmonic_count: usize) -> RGBColor
     let hue_degrees = (220.0 - 255.0 * normalized).rem_euclid(360.0);
     let saturation = 0.58 + 0.18 * (1.0 - (2.0 * normalized - 1.0).abs());
     let value = 0.64 + 0.16 * (normalized * std::f32::consts::TAU * 2.0).sin().abs();
-    hsv_to_rgb(hue_degrees, saturation.clamp(0.0, 1.0), value.clamp(0.0, 1.0))
+    hsv_to_rgb(
+        hue_degrees,
+        saturation.clamp(0.0, 1.0),
+        value.clamp(0.0, 1.0),
+    )
 }
 
 fn hsv_to_rgb(hue_degrees: f32, saturation: f32, value: f32) -> RGBColor {
@@ -591,12 +598,12 @@ fn strongest_harmonic_legend_entries(
     ranked
         .into_iter()
         .take(10)
-        .map(|(harmonic_index, _mean_value, harmonic_number, frequency_hz)| {
-            HarmonicLegendEntry {
+        .map(
+            |(harmonic_index, _mean_value, harmonic_number, frequency_hz)| HarmonicLegendEntry {
                 label: format!("H{harmonic_number} {:.0} Hz", frequency_hz),
                 color: harmonic_fill_color(harmonic_index, max_harmonics),
-            }
-        })
+            },
+        )
         .collect()
 }
 
@@ -618,11 +625,7 @@ fn perceptual_frequency_weight(frequency_hz: f32) -> f32 {
     10.0_f32.powf(a_weighting_db / 20.0)
 }
 
-fn center_band_polygon(
-    frames: &[FrameAnalysis],
-    lower: &[f32],
-    upper: &[f32],
-) -> Vec<(f32, f32)> {
+fn center_band_polygon(frames: &[FrameAnalysis], lower: &[f32], upper: &[f32]) -> Vec<(f32, f32)> {
     let mut polygon = center_series_points(frames, upper);
     for (x, y) in center_series_points(frames, lower).into_iter().rev() {
         polygon.push((x, y));
@@ -819,7 +822,10 @@ fn build_spectral_graph(frames: &[FrameAnalysis]) -> Result<Option<GraphImage>, 
     .map(Some)
 }
 
-fn build_perceptual_harmonics_graph(report: &AnalysisReport, max_hz: f32) -> Result<Option<GraphImage>, String> {
+fn build_perceptual_harmonics_graph(
+    report: &AnalysisReport,
+    max_hz: f32,
+) -> Result<Option<GraphImage>, String> {
     let frames = &report.frames;
     if frames.is_empty() {
         return Ok(None);
@@ -861,13 +867,11 @@ fn build_perceptual_harmonics_graph(report: &AnalysisReport, max_hz: f32) -> Res
                         .enumerate()
                         .map(|(frame_index, frame)| {
                             lower[frame_index]
-                                + perceptual_display_band_height(
-                                    perceptual_harmonic_contribution(
-                                        frame,
-                                        harmonic_index,
-                                        max_hz,
-                                    ),
-                                )
+                                + perceptual_display_band_height(perceptual_harmonic_contribution(
+                                    frame,
+                                    harmonic_index,
+                                    max_hz,
+                                ))
                         })
                         .collect();
 
@@ -907,10 +911,7 @@ fn build_perceptual_harmonics_graph(report: &AnalysisReport, max_hz: f32) -> Res
                 .legend({
                     let color = harmonic_fill_color(1, max_harmonics);
                     move |(x, y)| {
-                        Rectangle::new(
-                            [(x, y - 4), (x + 24, y + 4)],
-                            color.mix(0.22).filled(),
-                        )
+                        Rectangle::new([(x, y - 4), (x + 24, y + 4)], color.mix(0.22).filled())
                     }
                 });
             chart
@@ -919,7 +920,9 @@ fn build_perceptual_harmonics_graph(report: &AnalysisReport, max_hz: f32) -> Res
                     BLACK.stroke_width(2),
                 )))?
                 .label("Perceptual total (H2+)")
-                .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 24, y)], BLACK.stroke_width(2)));
+                .legend(|(x, y)| {
+                    PathElement::new(vec![(x, y), (x + 24, y)], BLACK.stroke_width(2))
+                });
             for entry in &legend_harmonics {
                 chart
                     .draw_series(std::iter::once(PathElement::new(
@@ -929,7 +932,9 @@ fn build_perceptual_harmonics_graph(report: &AnalysisReport, max_hz: f32) -> Res
                     .label(entry.label.clone())
                     .legend({
                         let color = entry.color;
-                        move |(x, y)| PathElement::new(vec![(x, y), (x + 24, y)], color.stroke_width(3))
+                        move |(x, y)| {
+                            PathElement::new(vec![(x, y), (x + 24, y)], color.stroke_width(3))
+                        }
                     });
             }
             Ok(())

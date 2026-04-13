@@ -37,19 +37,19 @@ impl AnalyzerConfig {
 
     pub fn apply_high_pitch_mode(&mut self) {
         self.max_pitch_hz = 1_200.0;
-        self.max_harmonic_frequency_hz = self.max_harmonic_frequency_hz.max(
-            recommended_high_pitch_harmonic_cap_hz(
-                self.sample_rate,
-                self.frame_size,
-                self.max_pitch_hz,
-            ),
-        );
-        self.voiced_max_zero_crossing_rate = self
-            .voiced_max_zero_crossing_rate
-            .max(recommended_voiced_max_zero_crossing_rate(
-                self.sample_rate,
-                self.max_pitch_hz,
-            ));
+        self.max_harmonic_frequency_hz =
+            self.max_harmonic_frequency_hz
+                .max(recommended_high_pitch_harmonic_cap_hz(
+                    self.sample_rate,
+                    self.frame_size,
+                    self.max_pitch_hz,
+                ));
+        self.voiced_max_zero_crossing_rate =
+            self.voiced_max_zero_crossing_rate
+                .max(recommended_voiced_max_zero_crossing_rate(
+                    self.sample_rate,
+                    self.max_pitch_hz,
+                ));
     }
 
     pub fn frame_step_seconds(&self) -> f32 {

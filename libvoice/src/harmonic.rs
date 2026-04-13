@@ -103,7 +103,8 @@ fn measure_harmonic_band_power(
     if bin_count == 0 {
         let target_bin = (target_hz / bin_hz)
             .round()
-            .clamp(1.0, (magnitudes.len().saturating_sub(1)) as f32) as usize;
+            .clamp(1.0, (magnitudes.len().saturating_sub(1)) as f32)
+            as usize;
         let power = magnitudes[target_bin] * magnitudes[target_bin];
         (power > 1.0e-12).then_some(power)
     } else {

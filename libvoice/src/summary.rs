@@ -1,6 +1,5 @@
 use crate::model::{
-    ChunkAnalysis, FrameFeatures, HarmonicStats, HarmonicSummary, OverallAnalysis,
-    SpectralSummary,
+    ChunkAnalysis, FrameFeatures, HarmonicStats, HarmonicSummary, OverallAnalysis, SpectralSummary,
 };
 use crate::stats::{summarize_optional, summarize_required};
 
@@ -105,7 +104,9 @@ fn summarize_harmonics(frames: &[FrameFeatures]) -> Option<HarmonicSummary> {
         let max_frequency_hz = frames
             .iter()
             .filter_map(|frame| {
-                frame.pitch_hz.map(|pitch_hz| pitch_hz * frame.harmonic_strengths.len() as f32)
+                frame
+                    .pitch_hz
+                    .map(|pitch_hz| pitch_hz * frame.harmonic_strengths.len() as f32)
             })
             .fold(0.0_f32, f32::max);
 

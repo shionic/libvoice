@@ -74,11 +74,15 @@ pub fn parse_analyze_options(text: &str) -> Result<AnalyzeOptions, String> {
             "graph" => options.graph = enabled,
             "from" => {
                 if !enabled {
-                    return Err("`+from` expects a time value; `-from` is not supported.".to_string());
+                    return Err(
+                        "`+from` expects a time value; `-from` is not supported.".to_string()
+                    );
                 }
                 from_seconds = Some(parse_time_value(
                     token,
-                    tokens.next().ok_or_else(|| "`+from` requires a value like `20s`.".to_string())?,
+                    tokens
+                        .next()
+                        .ok_or_else(|| "`+from` requires a value like `20s`.".to_string())?,
                 )?);
             }
             "to" => {
@@ -87,7 +91,9 @@ pub fn parse_analyze_options(text: &str) -> Result<AnalyzeOptions, String> {
                 }
                 to_seconds = Some(parse_time_value(
                     token,
-                    tokens.next().ok_or_else(|| "`+to` requires a value like `1m40s`.".to_string())?,
+                    tokens
+                        .next()
+                        .ok_or_else(|| "`+to` requires a value like `1m40s`.".to_string())?,
                 )?);
             }
             "dur" => {
@@ -96,7 +102,9 @@ pub fn parse_analyze_options(text: &str) -> Result<AnalyzeOptions, String> {
                 }
                 dur_seconds = Some(parse_time_value(
                     token,
-                    tokens.next().ok_or_else(|| "`+dur` requires a value like `20s`.".to_string())?,
+                    tokens
+                        .next()
+                        .ok_or_else(|| "`+dur` requires a value like `20s`.".to_string())?,
                 )?);
             }
             "all" => {
@@ -184,7 +192,9 @@ fn parse_time_value(flag: &str, value: &str) -> Result<f32, String> {
     let seconds = parse_duration_seconds(value)
         .ok_or_else(|| format!("Invalid time value for `{flag}`: `{value}`."))?;
     if seconds <= 0.0 {
-        return Err(format!("Time value for `{flag}` must be greater than zero."));
+        return Err(format!(
+            "Time value for `{flag}` must be greater than zero."
+        ));
     }
     Ok(seconds)
 }

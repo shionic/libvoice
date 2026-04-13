@@ -162,7 +162,9 @@ fn build_config(sample_rate: u32, options: Option<JsValue>) -> Result<AnalyzerCo
         return Err(js_error("maxHarmonicFrequencyHz must be greater than 0"));
     }
     if config.harmonic_min_strength_ratio < 0.0 {
-        return Err(js_error("harmonicMinStrengthRatio must be greater than or equal to 0"));
+        return Err(js_error(
+            "harmonicMinStrengthRatio must be greater than or equal to 0",
+        ));
     }
 
     Ok(config)

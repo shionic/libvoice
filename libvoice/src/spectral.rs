@@ -274,11 +274,7 @@ mod tests {
         let magnitudes = (0..513)
             .map(|index| {
                 let hz = index as f32 * 15.625;
-                if hz <= 0.0 {
-                    1.0
-                } else {
-                    1.0 / hz.sqrt()
-                }
+                if hz <= 0.0 { 1.0 } else { 1.0 / hz.sqrt() }
             })
             .collect::<Vec<_>>();
         let tilt = estimate_spectral_tilt_db_per_octave(&magnitudes, 15.625);

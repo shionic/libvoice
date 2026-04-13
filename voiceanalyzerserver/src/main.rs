@@ -1,5 +1,6 @@
 use async_stream::stream;
 use axum::body::{Body, to_bytes};
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{DefaultBodyLimit, Query, Request};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -7,10 +8,11 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use bytes::Bytes;
 use clap::Parser;
-use futures_util::StreamExt;
+use futures_util::{SinkExt, StreamExt};
 use libvoice::{
     AnalysisReport, AnalyzerConfig, ChunkAnalysis, FrameAnalysis, OverallAnalysis, VoiceAnalyzer,
 };
+use rmp_serde::{decode::Error as MsgpackDecodeError, encode::Error as MsgpackEncodeError};
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use std::fmt::{Display, Formatter};
@@ -103,6 +105,42 @@ enum StreamEvent {
     },
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum WsClientMessage {
+    Audio { data: Vec<u8> },
+    Finish,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum WsServerEvent {
+    Started {
+        backend: &'static str,
+        sample_rate: u32,
+        channels: usize,
+        config: AnalyzerConfig,
+    },
+    FrameBatch {
+        processed_samples: usize,
+        frames: Vec<FrameAnalysis>,
+    },
+    Chunk {
+        chunk: ChunkAnalysis,
+    },
+    SummaryPartial {
+        processed_seconds: f32,
+        overall: OverallAnalysis,
+    },
+    Summary {
+        processed_seconds: f32,
+        overall: OverallAnalysis,
+    },
+    Error {
+        message: String,
+    },
+}
+
 #[derive(Debug)]
 struct ApiError {
     status: StatusCode,
@@ -125,6 +163,7 @@ async fn main() {
         .route("/", get(health_handler))
         .route("/v1/analyze", post(analyze_handler))
         .route("/v1/analyze/stream", post(stream_handler))
+        .route("/v2/analyze/ws", get(ws_handler))
         .layer(DefaultBodyLimit::disable());
 
     let listener = tokio::net::TcpListener::bind(args.bind)
@@ -144,7 +183,8 @@ async fn health_handler() -> Json<serde_json::Value> {
         "status": "ok",
         "routes": {
             "analyze": "POST /v1/analyze",
-            "stream": "POST /v1/analyze/stream"
+            "stream": "POST /v1/analyze/stream",
+            "ws_v2": "GET /v2/analyze/ws"
         }
     }))
 }
@@ -294,6 +334,185 @@ async fn stream_handler(
     Ok(response)
 }
 
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    Query(query): Query<AnalyzeQuery>,
+) -> Result<Response, ApiError> {
+    let encoding = query.pcm_encoding.unwrap_or(PcmEncoding::Auto);
+    if encoding == PcmEncoding::Auto {
+        return Err(bad_request(
+            "websocket streaming requires `pcm_encoding=f32_le` or `pcm_encoding=s16_le`",
+        ));
+    }
+
+    let sample_rate = query
+        .sample_rate
+        .ok_or_else(|| bad_request("websocket streaming requires `sample_rate`"))?;
+    if sample_rate == 0 {
+        return Err(bad_request("`sample_rate` must be greater than 0"));
+    }
+
+    let channels = query.channels.unwrap_or(1);
+    if channels == 0 {
+        return Err(bad_request("`channels` must be greater than 0"));
+    }
+
+    let config = build_config(sample_rate, &query)?;
+
+    Ok(ws
+        .max_message_size(MAX_UPLOAD_BYTES)
+        .on_upgrade(move |socket| {
+            handle_ws_session(socket, encoding, sample_rate, channels, config)
+        }))
+}
+
+async fn handle_ws_session(
+    mut socket: WebSocket,
+    encoding: PcmEncoding,
+    sample_rate: u32,
+    channels: usize,
+    config: AnalyzerConfig,
+) {
+    let mut analyzer = VoiceAnalyzer::new(config.clone());
+    let mut streamed_samples = 0usize;
+    let mut all_frames = Vec::new();
+    let mut pending = Vec::new();
+
+    if send_ws_event(
+        &mut socket,
+        &WsServerEvent::Started {
+            backend: "raw_pcm_websocket_v2",
+            sample_rate,
+            channels,
+            config,
+        },
+    )
+    .await
+    .is_err()
+    {
+        return;
+    }
+
+    while let Some(next) = socket.next().await {
+        let message = match next {
+            Ok(message) => message,
+            Err(error) => {
+                let _ = send_ws_error(
+                    &mut socket,
+                    format!("failed to read websocket message: {error}"),
+                )
+                .await;
+                return;
+            }
+        };
+
+        match message {
+            Message::Binary(bytes) => {
+                let client_message = match decode_ws_client_message(&bytes) {
+                    Ok(message) => message,
+                    Err(error) => {
+                        let _ = send_ws_error(&mut socket, error).await;
+                        return;
+                    }
+                };
+
+                match client_message {
+                    WsClientMessage::Audio { data } => {
+                        pending.extend_from_slice(&data);
+                        let samples = match drain_pcm_samples(&mut pending, encoding, channels) {
+                            Ok(samples) => samples,
+                            Err(error) => {
+                                let _ = send_ws_error(&mut socket, error).await;
+                                return;
+                            }
+                        };
+
+                        if samples.is_empty() {
+                            continue;
+                        }
+
+                        streamed_samples += samples.len();
+                        let (chunk, frames) = analyzer.process_chunk_with_frames(&samples);
+                        all_frames.extend(frames.iter().cloned());
+
+                        if !frames.is_empty()
+                            && send_ws_event(
+                                &mut socket,
+                                &WsServerEvent::FrameBatch {
+                                    processed_samples: streamed_samples,
+                                    frames,
+                                },
+                            )
+                            .await
+                            .is_err()
+                        {
+                            return;
+                        }
+
+                        if send_ws_event(&mut socket, &WsServerEvent::Chunk { chunk })
+                            .await
+                            .is_err()
+                        {
+                            return;
+                        }
+
+                        if send_ws_event(
+                            &mut socket,
+                            &WsServerEvent::SummaryPartial {
+                                processed_seconds: streamed_samples as f32 / sample_rate as f32,
+                                overall: summarize_partial_overall(streamed_samples, &all_frames),
+                            },
+                        )
+                        .await
+                        .is_err()
+                        {
+                            return;
+                        }
+                    }
+                    WsClientMessage::Finish => {
+                        if !pending.is_empty() {
+                            let _ = send_ws_error(
+                                &mut socket,
+                                "request body ended with a partial PCM sample".to_string(),
+                            )
+                            .await;
+                            return;
+                        }
+
+                        let overall = analyzer.finalize();
+                        let _ = send_ws_event(
+                            &mut socket,
+                            &WsServerEvent::Summary {
+                                processed_seconds: overall.processed_samples as f32
+                                    / sample_rate as f32,
+                                overall,
+                            },
+                        )
+                        .await;
+                        let _ = socket.close().await;
+                        return;
+                    }
+                }
+            }
+            Message::Close(_) => return,
+            Message::Ping(payload) => {
+                if socket.send(Message::Pong(payload)).await.is_err() {
+                    return;
+                }
+            }
+            Message::Text(_) => {
+                let _ = send_ws_error(
+                    &mut socket,
+                    "expected binary MessagePack websocket messages".to_string(),
+                )
+                .await;
+                return;
+            }
+            Message::Pong(_) => {}
+        }
+    }
+}
+
 fn build_config(sample_rate: u32, query: &AnalyzeQuery) -> Result<AnalyzerConfig, ApiError> {
     let mut config = AnalyzerConfig::new(sample_rate);
     if query.high_pitch_mode {
@@ -354,7 +573,9 @@ fn build_config(sample_rate: u32, query: &AnalyzeQuery) -> Result<AnalyzerConfig
         ));
     }
     if config.max_harmonic_frequency_hz <= 0.0 {
-        return Err(bad_request("`max_harmonic_frequency_hz` must be greater than 0"));
+        return Err(bad_request(
+            "`max_harmonic_frequency_hz` must be greater than 0",
+        ));
     }
     if config.harmonic_min_strength_ratio < 0.0 {
         return Err(bad_request(
@@ -543,6 +764,27 @@ fn drain_pcm_samples(
     }
 
     Ok(samples)
+}
+
+fn decode_ws_client_message(bytes: &[u8]) -> Result<WsClientMessage, String> {
+    rmp_serde::from_slice(bytes).map_err(format_msgpack_decode_error)
+}
+
+async fn send_ws_error(socket: &mut WebSocket, message: String) -> Result<(), axum::Error> {
+    send_ws_event(socket, &WsServerEvent::Error { message }).await
+}
+
+async fn send_ws_event(socket: &mut WebSocket, event: &WsServerEvent) -> Result<(), axum::Error> {
+    let payload = encode_ws_server_event(event).map_err(axum::Error::new)?;
+    socket.send(Message::Binary(payload.into())).await
+}
+
+fn encode_ws_server_event(event: &WsServerEvent) -> Result<Vec<u8>, MsgpackEncodeError> {
+    rmp_serde::to_vec_named(event)
+}
+
+fn format_msgpack_decode_error(error: MsgpackDecodeError) -> String {
+    format!("invalid MessagePack websocket payload: {error}")
 }
 
 fn fold_to_mono<'a>(

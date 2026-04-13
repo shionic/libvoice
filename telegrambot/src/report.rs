@@ -92,7 +92,7 @@ pub fn format_report(
     }
 
     writeln!(&mut out).unwrap();
-        writeln!(
+    writeln!(
         &mut out,
         "<i>Tip:</i> <code>+energy</code>, <code>+harmonics</code>, <code>+graph</code>, and <code>+spectrum</code> add more detail. Use <code>-feature</code> to hide a section."
     )

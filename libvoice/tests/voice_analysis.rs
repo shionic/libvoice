@@ -41,8 +41,7 @@ fn synth_harmonic_stack(
                 continue;
             }
             let harmonic_number = harmonic_index + 1;
-            value += amplitude
-                * (2.0 * PI * pitch_hz * harmonic_number as f32 * t).sin();
+            value += amplitude * (2.0 * PI * pitch_hz * harmonic_number as f32 * t).sin();
         }
         *sample = value;
     }
@@ -196,7 +195,10 @@ fn high_pitch_mode_preserves_harmonic_detection_near_upper_pitch_limit() {
     approx_eq(h5.strength_ratio.mean, 0.06, 0.05);
     assert!(harmonics.max_frequency_hz > 5_000.0);
     assert!(
-        harmonics.harmonics.iter().all(|harmonic| harmonic.harmonic_number <= 8),
+        harmonics
+            .harmonics
+            .iter()
+            .all(|harmonic| harmonic.harmonic_number <= 8),
         "900 Hz F0 with a raised cap should still be bounded by Nyquist"
     );
 }
@@ -419,7 +421,10 @@ fn harmonic_stack_reports_normalized_harmonic_strengths() {
         .harmonics
         .iter()
         .find(|harmonic| harmonic.harmonic_number == 3);
-    assert!(third.is_none(), "weak or absent harmonics should not be reindexed");
+    assert!(
+        third.is_none(),
+        "weak or absent harmonics should not be reindexed"
+    );
 
     let fourth = harmonics
         .harmonics

@@ -7,8 +7,8 @@ mod spectral;
 mod stats;
 mod summary;
 
-pub use analyzer::VoiceAnalyzer;
 pub use analyzer::AnalysisOutputOptions;
+pub use analyzer::VoiceAnalyzer;
 pub use config::AnalyzerConfig;
 pub use model::{
     AnalysisReport, ChunkAnalysis, FftSpectrum, FftSpectrumFrame, FrameAnalysis, HarmonicStats,

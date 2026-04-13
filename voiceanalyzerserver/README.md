@@ -7,6 +7,7 @@ Base routes:
 - `GET /`
 - `POST /v1/analyze`
 - `POST /v1/analyze/stream`
+- `GET /v2/analyze/ws`
 
 The server listens on `127.0.0.1:3000` by default. Override with:
 
@@ -29,6 +30,13 @@ cargo run --release --manifest-path voiceanalyzerserver/Cargo.toml -- --bind 0.0
 - Accepts raw PCM only.
 - Returns NDJSON (`application/x-ndjson`).
 - Emits per-frame events, per-chunk summaries, rolling partial overall summaries, and a final summary.
+
+`GET /v2/analyze/ws`
+
+- Incremental streaming analysis over WebSocket.
+- Accepts client binary MessagePack messages carrying raw PCM chunks.
+- Returns server binary MessagePack events.
+- Emits per-batch frame events, per-chunk summaries, rolling partial overall summaries, and a final summary.
 
 ## Query Parameters
 
@@ -62,6 +70,8 @@ Notes:
 - `pcm_encoding=auto` is the default for `/v1/analyze`.
 - `/v1/analyze/stream` requires `pcm_encoding=f32_le` or `pcm_encoding=s16_le`.
 - `/v1/analyze/stream` requires `sample_rate`.
+- `/v2/analyze/ws` requires `pcm_encoding=f32_le` or `pcm_encoding=s16_le`.
+- `/v2/analyze/ws` requires `sample_rate`.
 - `channels` defaults to `1`.
 - The server folds multichannel PCM to mono by averaging channels.
 
@@ -315,3 +325,112 @@ Common error cases:
 Streaming over plain HTTP is acceptable when the network path supports full duplex behavior.
 
 In practice, buffering by clients, reverse proxies, or load balancers can delay streamed events. For controlled deployments this NDJSON protocol is fine. For less predictable internet paths, a WebSocket transport may be more reliable later.
+
+## WebSocket Protocol V2
+
+`GET /v2/analyze/ws` upgrades to a WebSocket session.
+
+The query string uses the same analyzer and PCM parameters as `/v1/analyze/stream`:
+
+- `pcm_encoding=f32_le` or `pcm_encoding=s16_le`
+- `sample_rate`
+- optional `channels`
+- optional analyzer parameters such as `frame_size`, `hop_size`, `min_pitch_hz`, `max_pitch_hz`
+
+The server does not wait for application-level acknowledgements. Clients should send audio chunks continuously and read server events as they arrive.
+
+### Wire format
+
+- client to server: binary WebSocket messages containing MessagePack objects
+- server to client: binary WebSocket messages containing MessagePack objects
+- text WebSocket messages are rejected
+
+### Client messages
+
+`audio`
+
+- carries one raw PCM byte chunk
+- the bytes use the `pcm_encoding` and `channels` declared in the URL query string
+
+Shape:
+
+```json
+{
+  "type": "audio",
+  "data": "<raw PCM bytes>"
+}
+```
+
+`finish`
+
+- marks a clean end of input
+- the server replies with one final `summary` event and then closes the socket
+
+Shape:
+
+```json
+{
+  "type": "finish"
+}
+```
+
+If the client disconnects without sending `finish`, the server stops processing and no final summary is guaranteed.
+
+### Server events
+
+`started`
+
+- emitted once after the socket is accepted
+
+`frame_batch`
+
+- emitted after an audio message when that input produced one or more voiced frames
+- contains the voiced frames generated from that input chunk
+
+`chunk`
+
+- emitted after every non-empty audio message
+- contains the chunk summary for that input piece
+
+`summary_partial`
+
+- emitted after every non-empty audio message
+- contains the current rolling overall summary
+
+`summary`
+
+- emitted once after `finish`
+- contains the authoritative final overall summary
+
+`error`
+
+- emitted when the server cannot decode the MessagePack message, the PCM bytes, or the analyzer configuration
+- the server closes the session after sending it
+
+Example event shapes:
+
+```json
+{
+  "type": "started",
+  "backend": "raw_pcm_websocket_v2",
+  "sample_rate": 16000,
+  "channels": 1,
+  "config": { "...": "AnalyzerConfig" }
+}
+```
+
+```json
+{
+  "type": "frame_batch",
+  "processed_samples": 4096,
+  "frames": [{ "...": "FrameAnalysis" }]
+}
+```
+
+```json
+{
+  "type": "summary",
+  "processed_seconds": 1.248,
+  "overall": { "...": "OverallAnalysis" }
+}
+```
