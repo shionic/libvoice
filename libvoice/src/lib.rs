@@ -77,7 +77,10 @@ mod tests {
         let report = VoiceAnalyzer::analyze_buffer_with_output_options(
             AnalyzerConfig::new(sample_rate),
             &samples,
-            AnalysisOutputOptions { fft_spectrum: true },
+            AnalysisOutputOptions {
+                frame_analysis: true,
+                fft_spectrum: true,
+            },
         );
 
         let spectrum = report.fft_spectrum.expect("expected fft spectrum");
@@ -101,6 +104,25 @@ mod tests {
             .unwrap();
         let peak_hz = peak_bin as f32 * spectrum.bin_hz;
         assert!((peak_hz - 220.0).abs() < 20.0, "peak_hz = {}", peak_hz);
+    }
+
+    #[test]
+    fn can_skip_frame_analysis_when_only_summaries_are_needed() {
+        let sample_rate = 16_000;
+        let samples = synth_sine(sample_rate, 220.0, 1.0);
+        let report = VoiceAnalyzer::analyze_buffer_with_output_options(
+            AnalyzerConfig::new(sample_rate),
+            &samples,
+            AnalysisOutputOptions {
+                frame_analysis: false,
+                fft_spectrum: false,
+            },
+        );
+
+        assert!(report.frames.is_empty());
+        assert!(report.overall.frame_count > 0);
+        assert_eq!(report.chunks.len(), 1);
+        assert_eq!(report.chunks[0].frame_count, report.overall.frame_count);
     }
 
     #[test]

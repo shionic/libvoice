@@ -132,12 +132,17 @@ fn median_smooth_pitch_contour(raw: &[f32], radius: usize) -> Vec<f32> {
     }
 
     let mut smoothed = Vec::with_capacity(raw.len());
+    let mut window = [0.0_f32; 5];
     for index in 0..raw.len() {
         let start = index.saturating_sub(radius);
         let end = (index + radius + 1).min(raw.len());
-        let mut window = raw[start..end].to_vec();
-        window.sort_by(|a, b| a.total_cmp(b));
-        let median = window[window.len() / 2];
+        let mut len = 0usize;
+        for &value in &raw[start..end] {
+            window[len] = value;
+            len += 1;
+        }
+        window[..len].sort_unstable_by(|a, b| a.total_cmp(b));
+        let median = window[len / 2];
         smoothed.push(median);
     }
 

@@ -31,6 +31,7 @@ pub fn decode_audio_bytes(bytes: &[u8], file_name: Option<&str>) -> Result<Decod
 
 pub fn analyze_samples(
     decoded: &DecodedAudio,
+    include_frame_analysis: bool,
     include_fft_spectrum: bool,
     high_pitch_mode: bool,
 ) -> AnalysisReport {
@@ -42,6 +43,7 @@ pub fn analyze_samples(
         config,
         &decoded.samples,
         AnalysisOutputOptions {
+            frame_analysis: include_frame_analysis,
             fft_spectrum: include_fft_spectrum,
         },
     )

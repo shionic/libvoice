@@ -7,9 +7,19 @@ use crate::signal::hann_window;
 use crate::spectral::FrameAnalyzer;
 use crate::summary::{summarize_chunk, summarize_overall};
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct AnalysisOutputOptions {
+    pub frame_analysis: bool,
     pub fft_spectrum: bool,
+}
+
+impl Default for AnalysisOutputOptions {
+    fn default() -> Self {
+        Self {
+            frame_analysis: true,
+            fft_spectrum: false,
+        }
+    }
 }
 
 pub struct VoiceAnalyzer {
@@ -37,17 +47,18 @@ impl VoiceAnalyzer {
         let window = hann_window(config.frame_size);
         let frame_analyzer = FrameAnalyzer::new(config.clone(), window);
         let fft_spectrum_frames = output_options.fft_spectrum.then(Vec::new);
+        let pending_capacity = config.frame_size + config.hop_size;
 
         Self {
             config,
             output_options,
             frame_analyzer,
-            pending: Vec::new(),
+            pending: Vec::with_capacity(pending_capacity),
             pending_start: 0,
             processed_samples: 0,
             next_chunk_index: 0,
             next_frame_index: 0,
-            overall_frames: Vec::new(),
+            overall_frames: Vec::with_capacity(32),
             fft_spectrum_frames,
         }
     }
@@ -64,11 +75,13 @@ impl VoiceAnalyzer {
         &mut self,
         samples: &[f32],
     ) -> (ChunkAnalysis, Vec<FrameAnalysis>) {
+        let additional_frames = self.estimated_additional_frames(samples.len());
+        self.reserve_for_samples(samples.len(), additional_frames);
         self.pending.extend_from_slice(samples);
         self.processed_samples += samples.len();
 
-        let mut frame_features = Vec::new();
-        let mut frames = Vec::new();
+        let mut frame_features = Vec::with_capacity(additional_frames);
+        let mut frames = Vec::with_capacity(additional_frames);
         while self.pending_start + self.config.frame_size <= self.pending.len() {
             let frame_start_sample =
                 self.processed_samples - self.pending.len() + self.pending_start;
@@ -79,14 +92,16 @@ impl VoiceAnalyzer {
             let is_voiced = self.is_voiced_frame(&features);
             self.capture_fft_spectrum(frame_start_sample, is_voiced);
             if is_voiced {
-                self.overall_frames.push(features.clone());
                 frame_features.push(features.clone());
-                let cumulative = summarize_overall(
-                    frame_start_sample + self.config.frame_size,
-                    &self.overall_frames,
-                    0.0,
-                );
-                frames.push(self.build_frame_analysis(frame_start_sample, features, cumulative));
+                self.overall_frames.push(features.clone());
+                if self.output_options.frame_analysis {
+                    let cumulative = summarize_overall(
+                        frame_start_sample + self.config.frame_size,
+                        &self.overall_frames,
+                        0.0,
+                    );
+                    frames.push(self.build_frame_analysis(frame_start_sample, features, cumulative));
+                }
             }
         }
 
@@ -180,6 +195,28 @@ impl VoiceAnalyzer {
         self.pending.copy_within(self.pending_start.., 0);
         self.pending.truncate(remaining);
         self.pending_start = 0;
+    }
+
+    fn reserve_for_samples(&mut self, incoming_samples: usize, additional_frames: usize) {
+        self.pending.reserve(incoming_samples);
+        if additional_frames == 0 {
+            return;
+        }
+
+        self.overall_frames.reserve(additional_frames);
+        if let Some(fft_spectrum_frames) = self.fft_spectrum_frames.as_mut() {
+            fft_spectrum_frames.reserve(additional_frames);
+        }
+    }
+
+    fn estimated_additional_frames(&self, incoming_samples: usize) -> usize {
+        let total_pending = self.pending.len() + incoming_samples;
+        let available = total_pending.saturating_sub(self.pending_start);
+        if available < self.config.frame_size {
+            0
+        } else {
+            1 + (available - self.config.frame_size) / self.config.hop_size.max(1)
+        }
     }
 
     fn is_voiced_frame(&self, features: &FrameFeatures) -> bool {

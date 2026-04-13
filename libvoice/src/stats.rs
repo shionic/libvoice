@@ -19,7 +19,7 @@ fn summarize_values(mut values: Vec<f32>) -> Option<SummaryStats> {
         return None;
     }
 
-    values.sort_by(|a, b| a.total_cmp(b));
+    values.sort_unstable_by(|a, b| a.total_cmp(b));
     let count = values.len();
     let mean = values.iter().sum::<f32>() / count as f32;
     let variance = values

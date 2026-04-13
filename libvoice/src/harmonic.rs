@@ -1,9 +1,11 @@
 #[derive(Debug, Default)]
-pub(crate) struct HarmonicAnalyzer;
+pub(crate) struct HarmonicAnalyzer {
+    power_prefix_sums: Vec<f32>,
+}
 
 impl HarmonicAnalyzer {
     pub(crate) fn new() -> Self {
-        Self
+        Self::default()
     }
 
     pub(crate) fn estimate(
@@ -28,15 +30,23 @@ impl HarmonicAnalyzer {
             return Vec::new();
         }
 
+        self.power_prefix_sums.resize(magnitudes.len() + 1, 0.0);
+        self.power_prefix_sums[0] = 0.0;
+        for (index, magnitude) in magnitudes.iter().copied().enumerate() {
+            let power = magnitude * magnitude;
+            self.power_prefix_sums[index + 1] = self.power_prefix_sums[index] + power;
+        }
+
         let harmonic_count = (max_frequency_hz / f0_hz).floor().max(1.0) as usize;
         let mut band_powers = Vec::with_capacity(harmonic_count);
         for harmonic_number in 1..=harmonic_count {
             band_powers.push(measure_harmonic_band_power(
-                magnitudes,
+                magnitudes.len(),
                 bin_hz,
                 f0_hz,
                 harmonic_number,
                 max_frequency_hz,
+                &self.power_prefix_sums,
             ));
         }
 
@@ -68,11 +78,12 @@ impl HarmonicAnalyzer {
 }
 
 fn measure_harmonic_band_power(
-    magnitudes: &[f32],
+    magnitude_len: usize,
     bin_hz: f32,
     f0_hz: f32,
     harmonic_number: usize,
     max_frequency_hz: f32,
+    power_prefix_sums: &[f32],
 ) -> Option<f32> {
     let target_hz = harmonic_number as f32 * f0_hz;
     if target_hz > max_frequency_hz || harmonic_number == 0 {
@@ -89,25 +100,18 @@ fn measure_harmonic_band_power(
         return None;
     }
 
-    let mut power_sum = 0.0_f32;
-    let mut bin_count = 0usize;
-    for (index, magnitude) in magnitudes.iter().copied().enumerate().skip(1) {
-        let bin_center_hz = index as f32 * bin_hz;
-        if bin_center_hz < lower_edge_hz || bin_center_hz > upper_edge_hz {
-            continue;
-        }
-        power_sum += magnitude * magnitude;
-        bin_count += 1;
-    }
+    let max_bin = magnitude_len.saturating_sub(1);
+    let start_bin = (lower_edge_hz / bin_hz).ceil().max(1.0) as usize;
+    let end_bin = (upper_edge_hz / bin_hz).floor().min(max_bin as f32) as usize;
 
-    if bin_count == 0 {
+    if start_bin > end_bin {
         let target_bin = (target_hz / bin_hz)
             .round()
-            .clamp(1.0, (magnitudes.len().saturating_sub(1)) as f32)
-            as usize;
-        let power = magnitudes[target_bin] * magnitudes[target_bin];
+            .clamp(1.0, max_bin as f32) as usize;
+        let power = power_prefix_sums[target_bin + 1] - power_prefix_sums[target_bin];
         (power > 1.0e-12).then_some(power)
     } else {
+        let power_sum = power_prefix_sums[end_bin + 1] - power_prefix_sums[start_bin];
         (power_sum > 1.0e-12).then_some(power_sum)
     }
 }

@@ -7,7 +7,7 @@
 ### Public Types
 
 - `VoiceAnalyzer`: streaming analyzer state.
-- `AnalysisOutputOptions`: optional extra outputs. Currently only `fft_spectrum`.
+- `AnalysisOutputOptions`: optional extra outputs and frame-detail controls.
 - `AnalyzerConfig`: runtime analysis settings.
 - `AnalysisReport`: full result returned by one-shot helpers.
 - `FrameAnalysis`: one voiced frame plus cumulative stats up to that frame.
@@ -78,6 +78,7 @@
 
 `AnalysisOutputOptions::default()` sets:
 
+- `frame_analysis: true`
 - `fft_spectrum: false`
 
 For the default `16_000` Hz config:
@@ -97,7 +98,8 @@ For the default `16_000` Hz config:
 - Keep `voiced_rms_threshold = 0.015`, `voiced_max_spectral_flatness = 0.45`, and `voiced_max_zero_crossing_rate = 0.25` together. In the current implementation, they are the main protection against silence and broadband noise entering the voiced summaries.
 - Leave `max_formants = 4` unless you have a strong reason to expose more LPC poles. The public summary only has slots `f1` through `f4`.
 - Keep `formant_max_bandwidth_hz = 700` for speech-like vowels. Narrow resonances survive; wide, unstable poles are rejected.
-- Enable `AnalysisOutputOptions { fft_spectrum: true }` only when you actually need per-frame FFT magnitudes. It increases result size substantially.
+- Set `frame_analysis: false` when you only need chunk/overall summaries. This skips building per-frame cumulative reports.
+- Enable `AnalysisOutputOptions { frame_analysis: true, fft_spectrum: true }` only when you actually need per-frame FFT magnitudes. It increases result size substantially.
 - Treat `jitter` as unavailable for now. The field exists in the report schema, but the current library always returns `None`.
 
 ## 3) List of All Features

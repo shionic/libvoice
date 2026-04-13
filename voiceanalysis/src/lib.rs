@@ -36,7 +36,12 @@ pub fn analyze_audio_bytes(
         Some(clip) => clip_audio_seconds(&decoded, clip.from_seconds, clip.to_seconds)?,
         None => decoded,
     };
-    let report = analyze_samples(&analysis_audio, options.spectrum, options.high_pitch_mode);
+    let report = analyze_samples(
+        &analysis_audio,
+        options.graph || options.spectrum,
+        options.spectrum,
+        options.high_pitch_mode,
+    );
     let report_label = format_report_label(label, resolved_clip.as_ref());
     let report_text = format_report(&report_label, &analysis_audio, &report, options);
     let mut graphs = if options.graph {

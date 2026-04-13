@@ -309,6 +309,7 @@ fn analyze_file(path: &Path, args: &Args) -> Result<FileAnalysisOutput, String> 
         build_config(decoded.sample_rate, args),
         &decoded.samples,
         AnalysisOutputOptions {
+            frame_analysis: requires_frame_analysis(args),
             fft_spectrum: args.spectrum_graphs,
         },
     );
@@ -331,6 +332,17 @@ fn analyze_file(path: &Path, args: &Args) -> Result<FileAnalysisOutput, String> 
         voiced_frames,
         graph_paths,
     })
+}
+
+fn requires_frame_analysis(args: &Args) -> bool {
+    if args.graph_dir.is_some() {
+        return true;
+    }
+
+    match args.format {
+        OutputFormat::Text => args.frame_from.is_some() || args.frame_to.is_some(),
+        OutputFormat::Json | OutputFormat::FramesJson | OutputFormat::VoicedIntervalsJson => true,
+    }
 }
 
 fn write_graphs(path: &Path, report: &AnalysisReport, args: &Args) -> Result<Vec<PathBuf>, String> {
