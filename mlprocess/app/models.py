@@ -4,30 +4,54 @@ import json
 import math
 import os
 import sys
+import tempfile
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import soundfile as sf
 
-from .audio import PreparedAudio
+from .audio import PreparedAudio, load_audio
 from .config import Settings, settings
+
+
+@dataclass
+class RemovedMusicResult:
+    output_path: Path
+    original_sample_rate: int
+    output_sample_rate: int
+    output_channels: int
+    duration_seconds: float
+    model_name: str
+    stem_name: str
+
+    def cleanup(self) -> None:
+        try:
+            self.output_path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 class ModelManager:
     def __init__(self, cfg: Settings = settings) -> None:
         self.cfg = cfg
         self._ecapa = None
+        self._demucs = None
+        self._demucs_bundle = None
 
     def warmup(self) -> None:
         self.cfg.models_dir.mkdir(parents=True, exist_ok=True)
         self.cfg.vendor_dir.mkdir(parents=True, exist_ok=True)
+        self.cfg.torch_home.mkdir(parents=True, exist_ok=True)
         mplconfigdir = self.cfg.models_dir / ".matplotlib"
         mplconfigdir.mkdir(parents=True, exist_ok=True)
         os.environ.setdefault("MPLCONFIGDIR", str(mplconfigdir))
+        os.environ["TORCH_HOME"] = str(self.cfg.torch_home)
         self._ensure_nisqa_repo()
         self._ensure_nisqa_weights()
         self._load_ecapa()
+        self._load_demucs()
 
     def analyze(self, audio: PreparedAudio, include_embedding: bool = True) -> dict[str, Any]:
         nisqa_output = self._predict_nisqa(audio.wav_path)
@@ -42,6 +66,59 @@ class ModelManager:
             "nisqa": nisqa_output,
             "ecapa_tdnn": ecapa_output,
         }
+
+    def remove_music(self, input_path: Path) -> RemovedMusicResult:
+        import torch
+        import torchaudio.functional as F
+
+        bundle, model = self._load_demucs()
+        waveform_np, sample_rate = load_audio(input_path)
+        if waveform_np.size == 0:
+            raise ValueError("decoded waveform is empty")
+
+        waveform = torch.from_numpy(waveform_np.T)
+        original_sample_rate = int(sample_rate)
+        if waveform.shape[0] != 2:
+            mono = waveform.mean(dim=0, keepdim=True)
+            waveform = mono.repeat(2, 1)
+
+        target_sample_rate = int(bundle.sample_rate)
+        if sample_rate != target_sample_rate:
+            waveform = F.resample(waveform, sample_rate, target_sample_rate)
+
+        with torch.inference_mode():
+            separated = model(waveform.unsqueeze(0))[0].detach().cpu()
+
+        try:
+            vocals_index = list(model.sources).index("vocals")
+        except ValueError as exc:
+            raise RuntimeError("configured Demucs model does not expose a vocals stem") from exc
+
+        vocals = separated[vocals_index].clamp(-1.0, 1.0)
+        duration_seconds = 0.0
+        if vocals.shape[-1] > 0:
+            duration_seconds = float(vocals.shape[-1]) / float(target_sample_rate)
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix="-vocals.wav") as handle:
+            output_path = Path(handle.name)
+
+        sf.write(
+            str(output_path),
+            vocals.transpose(0, 1).numpy(),
+            target_sample_rate,
+            format="WAV",
+            subtype="PCM_16",
+        )
+
+        return RemovedMusicResult(
+            output_path=output_path,
+            original_sample_rate=original_sample_rate,
+            output_sample_rate=target_sample_rate,
+            output_channels=int(vocals.shape[0]),
+            duration_seconds=duration_seconds,
+            model_name=self.cfg.demucs_bundle,
+            stem_name="vocals",
+        )
 
     def _ensure_nisqa_repo(self) -> None:
         if not self.cfg.nisqa_repo_dir.exists():
@@ -74,6 +151,28 @@ class ModelManager:
         )
         self._ecapa.device = torch.device("cpu")
         return self._ecapa
+
+    def _load_demucs(self):
+        if self._demucs is not None and self._demucs_bundle is not None:
+            return self._demucs_bundle, self._demucs
+
+        import torch
+        from torchaudio import pipelines
+
+        bundle = getattr(pipelines, self.cfg.demucs_bundle, None)
+        if bundle is None:
+            raise RuntimeError(
+                f"unsupported Demucs bundle '{self.cfg.demucs_bundle}'. "
+                "Expected one of: HDEMUCS_HIGH_MUSDB_PLUS, HDEMUCS_HIGH_MUSDB."
+            )
+
+        model = bundle.get_model()
+        model.to(torch.device("cpu"))
+        model.eval()
+
+        self._demucs_bundle = bundle
+        self._demucs = model
+        return bundle, model
 
     def _predict_nisqa(self, wav_path: Path) -> dict[str, Any]:
         from nisqa.NISQA_model import nisqaModel

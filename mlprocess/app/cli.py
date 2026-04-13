@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -12,7 +13,7 @@ from .models import ModelManager
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m app.cli",
-        description="Run local CPU inference with NISQA and ECAPA-TDNN on an audio file.",
+        description="Run local mlprocess actions on an audio file.",
     )
     parser.add_argument("audio_file", type=Path, help="Path to an input audio file.")
     parser.add_argument(
@@ -25,6 +26,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=2,
         help="JSON indentation level for stdout output. Default: 2.",
+    )
+    parser.add_argument(
+        "--remove-music-out",
+        type=Path,
+        help="Write a vocals-only WAV file using the HDemucs separation model instead of JSON analysis.",
     )
     return parser
 
@@ -41,6 +47,42 @@ def main() -> int:
 
     try:
         model_manager.warmup()
+    except Exception as exc:
+        print(f"setup failed: {exc}", file=sys.stderr)
+        return 1
+
+    if args.remove_music_out is not None:
+        output_path = args.remove_music_out.expanduser().resolve()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        result = None
+        try:
+            result = model_manager.remove_music(audio_file)
+            shutil.move(str(result.output_path), str(output_path))
+        except Exception as exc:
+            print(f"music removal failed: {exc}", file=sys.stderr)
+            return 1
+        finally:
+            if result is not None:
+                result.cleanup()
+
+        payload = {
+            "filename": audio_file.name,
+            "source_path": str(audio_file),
+            "output_path": str(output_path),
+            "demucs": {
+                "model": result.model_name,
+                "stem": result.stem_name,
+                "original_sample_rate": result.original_sample_rate,
+                "output_sample_rate": result.output_sample_rate,
+                "output_channels": result.output_channels,
+                "duration_seconds": result.duration_seconds,
+            },
+        }
+        json.dump(payload, sys.stdout, indent=args.indent)
+        sys.stdout.write("\n")
+        return 0
+
+    try:
         prepared_audio = prepare_audio(audio_file)
     except Exception as exc:
         print(f"setup failed: {exc}", file=sys.stderr)
@@ -66,4 +108,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

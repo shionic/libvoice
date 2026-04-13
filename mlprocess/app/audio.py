@@ -20,9 +20,14 @@ class PreparedAudio:
     model_sample_rate: int
     duration_seconds: float
     channels_after_mixdown: int
+    cleanup_original: bool = True
 
     def cleanup(self) -> None:
-        for path in (self.original_path, self.wav_path):
+        paths = [self.wav_path]
+        if self.cleanup_original:
+            paths.insert(0, self.original_path)
+
+        for path in paths:
             try:
                 path.unlink(missing_ok=True)
             except OSError:
@@ -36,10 +41,31 @@ def persist_upload_bytes(filename: str | None, data: bytes) -> Path:
         return Path(handle.name)
 
 
-def prepare_audio(input_path: Path) -> PreparedAudio:
-    waveform, sample_rate = sf.read(str(input_path), always_2d=True, dtype="float32")
-    if waveform.ndim != 2:
-        raise ValueError("decoded waveform must have shape [samples, channels]")
+def load_audio(input_path: Path) -> tuple[np.ndarray, int]:
+    try:
+        waveform, sample_rate = sf.read(str(input_path), always_2d=True, dtype="float32")
+        if waveform.ndim != 2:
+            raise ValueError("decoded waveform must have shape [samples, channels]")
+        return waveform, int(sample_rate)
+    except Exception:
+        waveform, sample_rate = librosa.load(
+            str(input_path),
+            sr=None,
+            mono=False,
+            dtype=np.float32,
+        )
+        waveform = np.asarray(waveform, dtype=np.float32)
+        if waveform.ndim == 1:
+            waveform = waveform[:, np.newaxis]
+        elif waveform.ndim == 2:
+            waveform = waveform.T
+        else:
+            raise ValueError("decoded waveform must have shape [samples, channels]")
+        return waveform, int(sample_rate)
+
+
+def prepare_audio(input_path: Path, cleanup_original: bool = False) -> PreparedAudio:
+    waveform, sample_rate = load_audio(input_path)
 
     mono_waveform = np.mean(waveform, axis=1, dtype=np.float32)
     if sample_rate != MODEL_SAMPLE_RATE:
@@ -65,4 +91,5 @@ def prepare_audio(input_path: Path) -> PreparedAudio:
         model_sample_rate=MODEL_SAMPLE_RATE,
         duration_seconds=duration_seconds,
         channels_after_mixdown=1,
+        cleanup_original=cleanup_original,
     )

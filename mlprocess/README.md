@@ -1,11 +1,12 @@
 # mlprocess
 
-`mlprocess` is a Python FastAPI service that runs two CPU inference pipelines for uploaded audio:
+`mlprocess` is a Python FastAPI service that runs CPU audio pipelines for uploaded audio:
 
 - `NISQA` for non-intrusive speech quality assessment
 - `ECAPA-TDNN` for speaker embeddings via SpeechBrain
+- `HDemucs` for vocal/music source separation
 
-The service accepts `multipart/form-data` uploads. It normalizes the input to mono 16 kHz WAV internally so the same request can be used for both models.
+The service accepts `multipart/form-data` uploads. The analysis route normalizes input to mono 16 kHz WAV internally for NISQA and ECAPA. Music removal uses a separate HDemucs endpoint and returns a vocals-only WAV file.
 
 ## Important runtime note
 
@@ -37,7 +38,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8010
 
 ## CLI
 
-Run inference directly on a local file:
+Run analysis directly on a local file:
 
 ```bash
 cd /home/shione/projects/rust/voicelib/mlprocess
@@ -49,6 +50,12 @@ To omit the full ECAPA embedding vector:
 
 ```bash
 python -m app.cli /path/to/sample.wav --no-embedding
+```
+
+To remove background music and write a vocals-only WAV:
+
+```bash
+python -m app.cli /path/to/song.mp3 --remove-music-out /tmp/song-vocals.wav
 ```
 
 ## API
@@ -66,6 +73,18 @@ curl \
   -X POST \
   "http://127.0.0.1:8010/v1/analyze?include_embedding=true" \
   -F "file=@sample.wav"
+```
+
+### Remove music from a song
+
+This returns a `audio/wav` file containing the HDemucs `vocals` stem.
+
+```bash
+curl \
+  -X POST \
+  "http://127.0.0.1:8010/v1/remove-music" \
+  -F "file=@song.mp3" \
+  --output song-vocals.wav
 ```
 
 ### Example response
@@ -103,8 +122,10 @@ curl \
 - `MLPROCESS_PORT` default `8010`
 - `MLPROCESS_MODELS_DIR` default `./models`
 - `MLPROCESS_VENDOR_DIR` default `./vendor`
+- `MLPROCESS_TORCH_HOME` default `./models/torch-cache`
 - `MLPROCESS_ECAPA_SOURCE` default `speechbrain/spkrec-ecapa-voxceleb`
 - `MLPROCESS_ECAPA_SAVEDIR` default `./models/ecapa-tdnn`
+- `MLPROCESS_DEMUCS_BUNDLE` default `HDEMUCS_HIGH_MUSDB_PLUS`
 - `MLPROCESS_NISQA_REPO_DIR` default `./vendor/NISQA`
 - `MLPROCESS_NISQA_WEIGHTS_PATH` default `./models/nisqa.tar`
 - `MLPROCESS_NISQA_WEIGHTS_URL` default official raw GitHub URL for `weights/nisqa.tar`
@@ -112,6 +133,7 @@ curl \
 ## Notes
 
 - CPU-only inference is enforced in application code.
+- HDemucs runs against the `torchaudio` pretrained bundle and writes its model cache under `MLPROCESS_TORCH_HOME`, which avoids read-only home-directory cache issues in sandboxed environments.
 - For compressed formats such as MP3/M4A/OGG, decoding support depends on the installed `torchaudio` backend and codecs available on the host.
 - NISQA’s upstream repository was originally published with an older Python stack, so if installation fails on your target machine, the first thing to check is the Python version and PyTorch compatibility.
 
@@ -120,3 +142,4 @@ curl \
 - NISQA official repository: <https://github.com/gabrielmittag/NISQA>
 - SpeechBrain ECAPA-TDNN model card: <https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb>
 - SpeechBrain classifier API: <https://speechbrain.readthedocs.io/en/latest/API/speechbrain.inference.classifiers.html>
+- Torchaudio HDemucs bundle docs: <https://pytorch.org/audio/stable/pipelines.html#source-separation>

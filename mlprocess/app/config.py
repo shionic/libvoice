@@ -14,10 +14,14 @@ class Settings:
     port: int = int(os.getenv("MLPROCESS_PORT", "8010"))
     models_dir: Path = Path(os.getenv("MLPROCESS_MODELS_DIR", BASE_DIR / "models")).resolve()
     vendor_dir: Path = Path(os.getenv("MLPROCESS_VENDOR_DIR", BASE_DIR / "vendor")).resolve()
+    torch_home: Path = Path(
+        os.getenv("MLPROCESS_TORCH_HOME", BASE_DIR / "models" / "torch-cache")
+    ).resolve()
     ecapa_source: str = os.getenv("MLPROCESS_ECAPA_SOURCE", "speechbrain/spkrec-ecapa-voxceleb")
     ecapa_savedir: Path = Path(
         os.getenv("MLPROCESS_ECAPA_SAVEDIR", BASE_DIR / "models" / "ecapa-tdnn")
     ).resolve()
+    demucs_bundle: str = os.getenv("MLPROCESS_DEMUCS_BUNDLE", "HDEMUCS_HIGH_MUSDB_PLUS")
     nisqa_repo_dir: Path = Path(
         os.getenv("MLPROCESS_NISQA_REPO_DIR", BASE_DIR / "vendor" / "NISQA")
     ).resolve()
@@ -31,4 +35,3 @@ class Settings:
 
 
 settings = Settings()
-
