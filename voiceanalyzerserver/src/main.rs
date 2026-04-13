@@ -58,10 +58,8 @@ struct AnalyzeQuery {
     voiced_rms_threshold: Option<f32>,
     voiced_max_spectral_flatness: Option<f32>,
     voiced_max_zero_crossing_rate: Option<f32>,
-    max_formants: Option<usize>,
-    formant_max_frequency_hz: Option<f32>,
-    formant_max_bandwidth_hz: Option<f32>,
-    formant_pre_emphasis_hz: Option<f32>,
+    max_harmonic_frequency_hz: Option<f32>,
+    harmonic_min_strength_ratio: Option<f32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -330,17 +328,11 @@ fn build_config(sample_rate: u32, query: &AnalyzeQuery) -> Result<AnalyzerConfig
     if let Some(voiced_max_zero_crossing_rate) = query.voiced_max_zero_crossing_rate {
         config.voiced_max_zero_crossing_rate = voiced_max_zero_crossing_rate;
     }
-    if let Some(max_formants) = query.max_formants {
-        config.max_formants = max_formants;
+    if let Some(max_harmonic_frequency_hz) = query.max_harmonic_frequency_hz {
+        config.max_harmonic_frequency_hz = max_harmonic_frequency_hz;
     }
-    if let Some(formant_max_frequency_hz) = query.formant_max_frequency_hz {
-        config.formant_max_frequency_hz = formant_max_frequency_hz;
-    }
-    if let Some(formant_max_bandwidth_hz) = query.formant_max_bandwidth_hz {
-        config.formant_max_bandwidth_hz = formant_max_bandwidth_hz;
-    }
-    if let Some(formant_pre_emphasis_hz) = query.formant_pre_emphasis_hz {
-        config.formant_pre_emphasis_hz = formant_pre_emphasis_hz;
+    if let Some(harmonic_min_strength_ratio) = query.harmonic_min_strength_ratio {
+        config.harmonic_min_strength_ratio = harmonic_min_strength_ratio;
     }
 
     if config.min_pitch_hz <= 0.0 || config.max_pitch_hz <= 0.0 {
@@ -356,8 +348,13 @@ fn build_config(sample_rate: u32, query: &AnalyzeQuery) -> Result<AnalyzerConfig
             "`hop_size` must be less than or equal to `frame_size`",
         ));
     }
-    if config.max_formants == 0 {
-        return Err(bad_request("`max_formants` must be greater than 0"));
+    if config.max_harmonic_frequency_hz <= 0.0 {
+        return Err(bad_request("`max_harmonic_frequency_hz` must be greater than 0"));
+    }
+    if config.harmonic_min_strength_ratio < 0.0 {
+        return Err(bad_request(
+            "`harmonic_min_strength_ratio` must be greater than or equal to 0",
+        ));
     }
 
     Ok(config)
@@ -629,7 +626,7 @@ fn summarize_partial_overall(
         frame_count: 0,
         pitch_hz: None,
         spectral: None,
-        formants: None,
+        harmonics: None,
         energy: None,
         jitter: None,
     }

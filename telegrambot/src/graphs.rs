@@ -26,7 +26,7 @@ pub fn generate_graphs(report: &AnalysisReport) -> Result<Vec<GraphImage>, Strin
     if let Some(graph) = build_pitch_graph(frames)? {
         graphs.push(graph);
     }
-    if let Some(graph) = build_formants_graph(frames)? {
+    if let Some(graph) = build_harmonics_graph(frames)? {
         graphs.push(graph);
     }
     if let Some(graph) = build_hnr_loudness_graph(frames)? {
@@ -120,17 +120,16 @@ pub fn build_spectrum_graph(report: &AnalysisReport) -> Result<Option<GraphImage
         }
     }
 
-    for segment in segmented_optional_series(
-        report
-            .frames
-            .iter()
-            .map(|frame| (frame.start_seconds, frame.pitch_hz)),
-    ) {
+    for run in voiced_runs(&report.frames) {
+        for segment in segmented_optional_series(
+            run.iter().map(|frame| (frame.start_seconds, frame.pitch_hz)),
+        ) {
         chart
             .draw_series(LineSeries::new(segment, WHITE.stroke_width(2)))
             .map_err(draw_err)?
             .label("Pitch")
             .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 24, y)], WHITE.stroke_width(2)));
+        }
     }
 
     chart
@@ -223,64 +222,224 @@ fn build_pitch_graph(frames: &[FrameAnalysis]) -> Result<Option<GraphImage>, Str
     .map(Some)
 }
 
-fn build_formants_graph(frames: &[FrameAnalysis]) -> Result<Option<GraphImage>, String> {
-    let mut all_values = Vec::new();
-    for frame in frames {
-        all_values.extend(
-            frame
-                .formants_hz
-                .iter()
-                .copied()
-                .filter(|value| *value > 0.0),
-        );
+fn build_harmonics_graph(frames: &[FrameAnalysis]) -> Result<Option<GraphImage>, String> {
+    let max_harmonics = frames
+        .iter()
+        .map(|frame| frame.harmonic_strengths.len())
+        .max()
+        .unwrap_or(0);
+    if max_harmonics == 0 {
+        return Ok(None);
     }
-    if all_values.is_empty() {
+
+    let total_strengths: Vec<f32> = frames
+        .iter()
+        .map(|frame| {
+            frame
+                .harmonic_strengths
+                .iter()
+                .filter_map(|value| *value)
+                .sum::<f32>()
+        })
+        .collect();
+    if total_strengths.iter().all(|value| *value <= 0.0) {
         return Ok(None);
     }
 
     let x_range = time_range(frames);
-    let y_range = padded_range(&all_values, 0.08, 120.0);
-    let colors = [BLUE, RED, GREEN, MAGENTA];
-    let labels = ["F1", "F2", "F3", "F4"];
+    let display_ceiling = harmonic_display_ceiling(&total_strengths);
+    let y_range = 0.0_f32..display_ceiling;
     let runs = voiced_runs(frames);
 
     render_graph(
-        "Formants",
-        "Frequency (Hz)",
+        "Harmonic stack",
+        "Cumulative strength ratio (F0 = 1)",
         x_range,
         y_range,
         |chart: &mut Chart2d<'_, '_>| {
-            for (slot, (label, color)) in labels.iter().zip(colors.iter()).enumerate() {
-                for run in &runs {
-                    let series = segmented_optional_series(run.iter().map(|frame| {
-                        (
-                            frame.start_seconds,
-                            frame
-                                .formants_hz
-                                .get(slot)
-                                .copied()
-                                .filter(|value| *value > 0.0),
-                        )
-                    }));
-                    for segment in series {
-                        chart.draw_series(LineSeries::new(segment, color))?;
+            let mut drew_boundary_legend = false;
+            for run in &runs {
+                let mut lower = vec![0.0_f32; run.len()];
+                for harmonic_index in 0..max_harmonics {
+                    let upper: Vec<f32> = run
+                        .iter()
+                        .enumerate()
+                        .map(|(frame_index, frame)| {
+                            (lower[frame_index]
+                                + frame
+                                    .harmonic_strengths
+                                    .get(harmonic_index)
+                                    .copied()
+                                    .flatten()
+                                    .unwrap_or(0.0))
+                            .min(display_ceiling)
+                        })
+                        .collect();
+
+                    if upper
+                        .iter()
+                        .zip(lower.iter())
+                        .all(|(upper, lower)| (upper - lower).abs() <= 1.0e-6)
+                    {
+                        continue;
                     }
+
+                    let fill = harmonic_fill_color(harmonic_index, max_harmonics);
+                    chart.draw_series(std::iter::once(Polygon::new(
+                        center_band_polygon(run, &lower, &upper),
+                        fill.mix(0.26).filled(),
+                    )))?;
+                    chart.draw_series(std::iter::once(PathElement::new(
+                        center_series_points(run, &upper),
+                        WHITE.mix(0.95).stroke_width(3),
+                    )))?;
+                    if harmonic_index < max_harmonics.saturating_sub(1) {
+                        chart.draw_series(std::iter::once(PathElement::new(
+                            center_series_points(run, &upper),
+                            fill.stroke_width(1),
+                        )))?;
+                    }
+                    if !drew_boundary_legend {
+                        chart
+                            .draw_series(std::iter::once(PathElement::new(
+                                vec![(0.0, 0.0), (0.0, 0.0)],
+                                WHITE.mix(0.95).stroke_width(3),
+                            )))?
+                            .label("Band boundaries")
+                            .legend(|(x, y)| {
+                                PathElement::new(
+                                    vec![(x, y), (x + 24, y)],
+                                    WHITE.mix(0.95).stroke_width(3),
+                                )
+                            });
+                        drew_boundary_legend = true;
+                    }
+
+                    lower = upper;
                 }
-                chart
-                    .draw_series(std::iter::once(PathElement::new(
-                        vec![(0.0, 0.0), (0.0, 0.0)],
-                        color,
-                    )))?
-                    .label(*label)
-                    .legend({
-                        let color = *color;
-                        move |(x, y)| PathElement::new(vec![(x, y), (x + 24, y)], color)
-                    });
+
+                chart.draw_series(std::iter::once(PathElement::new(
+                    center_series_points(run, &lower),
+                    BLACK.stroke_width(2),
+                )))?;
             }
+            chart
+                .draw_series(std::iter::once(PathElement::new(
+                    vec![(0.0, 0.0), (0.0, 0.0)],
+                    harmonic_fill_color(0, max_harmonics).mix(0.26).filled(),
+                )))?
+                .label("Stacked harmonic bands")
+                .legend({
+                    let color = harmonic_fill_color(0, max_harmonics);
+                    move |(x, y)| {
+                        Rectangle::new(
+                            [(x, y - 4), (x + 24, y + 4)],
+                            color.mix(0.26).filled(),
+                        )
+                    }
+                });
+            chart
+                .draw_series(std::iter::once(PathElement::new(
+                    vec![(0.0, 0.0), (0.0, 0.0)],
+                    BLACK.stroke_width(2),
+                )))?
+                .label("Total")
+                .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 24, y)], BLACK.stroke_width(2)));
             Ok(())
         },
     )
     .map(Some)
+}
+
+fn harmonic_display_ceiling(total_strengths: &[f32]) -> f32 {
+    let mut sorted: Vec<f32> = total_strengths
+        .iter()
+        .copied()
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .collect();
+    if sorted.is_empty() {
+        return 1.0;
+    }
+
+    sorted.sort_by(|a, b| a.total_cmp(b));
+    let robust_peak = percentile_sorted(&sorted, 0.97);
+    let absolute_peak = *sorted.last().unwrap_or(&robust_peak);
+    let base = robust_peak.max(sorted[0]).max(0.2);
+    let headroom = (base * 1.12).max(base + 0.1);
+    headroom.min(absolute_peak.max(headroom))
+}
+
+fn percentile_sorted(values: &[f32], percentile: f32) -> f32 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    if values.len() == 1 {
+        return values[0];
+    }
+
+    let position = percentile.clamp(0.0, 1.0) * (values.len() - 1) as f32;
+    let lower = position.floor() as usize;
+    let upper = position.ceil() as usize;
+    if lower == upper {
+        return values[lower];
+    }
+
+    let weight = position - lower as f32;
+    values[lower] * (1.0 - weight) + values[upper] * weight
+}
+
+fn harmonic_fill_color(harmonic_index: usize, harmonic_count: usize) -> RGBColor {
+    let normalized = if harmonic_count <= 1 {
+        0.0
+    } else {
+        harmonic_index as f32 / (harmonic_count - 1) as f32
+    };
+
+    let hue_degrees = (220.0 - 255.0 * normalized).rem_euclid(360.0);
+    let saturation = 0.58 + 0.18 * (1.0 - (2.0 * normalized - 1.0).abs());
+    let value = 0.64 + 0.16 * (normalized * std::f32::consts::TAU * 2.0).sin().abs();
+    hsv_to_rgb(hue_degrees, saturation.clamp(0.0, 1.0), value.clamp(0.0, 1.0))
+}
+
+fn hsv_to_rgb(hue_degrees: f32, saturation: f32, value: f32) -> RGBColor {
+    let hue = hue_degrees.rem_euclid(360.0) / 60.0;
+    let chroma = value * saturation;
+    let x = chroma * (1.0 - ((hue.rem_euclid(2.0)) - 1.0).abs());
+    let (r1, g1, b1) = match hue.floor() as i32 {
+        0 => (chroma, x, 0.0),
+        1 => (x, chroma, 0.0),
+        2 => (0.0, chroma, x),
+        3 => (0.0, x, chroma),
+        4 => (x, 0.0, chroma),
+        _ => (chroma, 0.0, x),
+    };
+    let m = value - chroma;
+
+    RGBColor(
+        ((r1 + m) * 255.0).round() as u8,
+        ((g1 + m) * 255.0).round() as u8,
+        ((b1 + m) * 255.0).round() as u8,
+    )
+}
+
+fn center_band_polygon(
+    frames: &[FrameAnalysis],
+    lower: &[f32],
+    upper: &[f32],
+) -> Vec<(f32, f32)> {
+    let mut polygon = center_series_points(frames, upper);
+    for (x, y) in center_series_points(frames, lower).into_iter().rev() {
+        polygon.push((x, y));
+    }
+    polygon
+}
+
+fn center_series_points(frames: &[FrameAnalysis], values: &[f32]) -> Vec<(f32, f32)> {
+    let mut points = Vec::with_capacity(frames.len());
+    for (frame, value) in frames.iter().zip(values.iter().copied()) {
+        points.push((((frame.start_seconds + frame.end_seconds) * 0.5), value));
+    }
+    points
 }
 
 fn build_hnr_loudness_graph(frames: &[FrameAnalysis]) -> Result<Option<GraphImage>, String> {

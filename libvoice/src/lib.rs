@@ -1,6 +1,6 @@
 mod analyzer;
 mod config;
-mod formant;
+mod harmonic;
 mod model;
 mod signal;
 mod spectral;
@@ -11,8 +11,8 @@ pub use analyzer::VoiceAnalyzer;
 pub use analyzer::AnalysisOutputOptions;
 pub use config::AnalyzerConfig;
 pub use model::{
-    AnalysisReport, ChunkAnalysis, FftSpectrum, FftSpectrumFrame, FormantStats, FormantSummary,
-    FrameAnalysis, JitterMetrics, OverallAnalysis, SpectralSummary, SummaryStats,
+    AnalysisReport, ChunkAnalysis, FftSpectrum, FftSpectrumFrame, FrameAnalysis, HarmonicStats,
+    HarmonicSummary, JitterMetrics, OverallAnalysis, SpectralSummary, SummaryStats,
 };
 
 #[cfg(test)]
@@ -101,5 +101,21 @@ mod tests {
             .unwrap();
         let peak_hz = peak_bin as f32 * spectrum.bin_hz;
         assert!((peak_hz - 220.0).abs() < 20.0, "peak_hz = {}", peak_hz);
+    }
+
+    #[test]
+    fn higher_sample_rates_use_larger_default_windows() {
+        let low = AnalyzerConfig::new(16_000);
+        let high = AnalyzerConfig::new(48_000);
+
+        assert_eq!(low.frame_size, 2_048);
+        assert_eq!(low.hop_size, 512);
+        assert_eq!(high.frame_size, 6_144);
+        assert_eq!(high.hop_size, 1_536);
+
+        let low_bin_hz = low.sample_rate as f32 / low.frame_size as f32;
+        let high_bin_hz = high.sample_rate as f32 / high.frame_size as f32;
+        assert!((low_bin_hz - 7.8125).abs() < 1.0e-6);
+        assert!((high_bin_hz - low_bin_hz).abs() < 1.0e-6);
     }
 }

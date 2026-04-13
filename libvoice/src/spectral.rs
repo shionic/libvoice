@@ -1,5 +1,5 @@
 use crate::config::AnalyzerConfig;
-use crate::formant::{FormantAnalyzer, FormantTracker};
+use crate::harmonic::HarmonicAnalyzer;
 use crate::model::FrameFeatures;
 use crate::signal::{PitchAnalyzer, estimate_hnr_db, estimate_loudness_dbfs, zero_crossing_rate};
 use realfft::{RealFftPlanner, RealToComplex};
@@ -17,8 +17,7 @@ pub(crate) struct FrameAnalyzer {
     fft_output: Vec<Complex32>,
     magnitudes: Vec<f32>,
     pitch_analyzer: PitchAnalyzer,
-    formant_analyzer: FormantAnalyzer,
-    formant_tracker: FormantTracker,
+    harmonic_analyzer: HarmonicAnalyzer,
     window: Vec<f32>,
     bin_hz: f32,
 }
@@ -38,8 +37,7 @@ impl FrameAnalyzer {
             fft_output,
             magnitudes: Vec::new(),
             pitch_analyzer: PitchAnalyzer::new(),
-            formant_analyzer: FormantAnalyzer::new(),
-            formant_tracker: FormantTracker::new(),
+            harmonic_analyzer: HarmonicAnalyzer::new(),
             window,
             bin_hz,
         }
@@ -49,6 +47,8 @@ impl FrameAnalyzer {
         debug_assert_eq!(frame.len(), self.config.frame_size);
 
         let mut energy_sum = 0.0_f32;
+        let mut trailing_energy_sum = 0.0_f32;
+        let trailing_start = frame.len() / 2;
         for ((slot, sample), window) in self
             .fft_input
             .iter_mut()
@@ -58,6 +58,9 @@ impl FrameAnalyzer {
             *slot = sample * window;
             energy_sum += sample * sample;
         }
+        for sample in frame.iter().copied().skip(trailing_start) {
+            trailing_energy_sum += sample * sample;
+        }
 
         self.fft
             .process(&mut self.fft_input, &mut self.fft_output)
@@ -65,6 +68,11 @@ impl FrameAnalyzer {
 
         let energy = energy_sum / frame.len() as f32;
         let rms = energy.sqrt();
+        let trailing_rms = if trailing_start < frame.len() {
+            (trailing_energy_sum / (frame.len() - trailing_start) as f32).sqrt()
+        } else {
+            rms
+        };
         let zcr = zero_crossing_rate(frame);
 
         self.magnitudes.resize(self.fft_output.len(), 0.0);
@@ -132,10 +140,13 @@ impl FrameAnalyzer {
         let pitch_hz = pitch.map(|estimate| estimate.hz);
         let loudness_dbfs = estimate_loudness_dbfs(rms);
         let hnr_db = estimate_hnr_db(pitch.map(|estimate| estimate.periodicity).unwrap_or(0.0));
-        let detected_formants = self.formant_analyzer.estimate(frame, &self.config);
-        let formants = self
-            .formant_tracker
-            .track(&detected_formants, self.config.max_formants);
+        let harmonic_strengths = self.harmonic_analyzer.estimate(
+            &self.magnitudes,
+            self.bin_hz,
+            pitch_hz,
+            self.config.max_harmonic_frequency_hz,
+            self.config.harmonic_min_strength_ratio,
+        );
         FrameFeatures {
             pitch_hz,
             pitch_clarity: pitch.map(|estimate| estimate.clarity).unwrap_or(0.0),
@@ -153,7 +164,8 @@ impl FrameAnalyzer {
             loudness_dbfs,
             hnr_db,
             energy,
-            formants,
+            harmonic_strengths,
+            trailing_rms,
         }
     }
 

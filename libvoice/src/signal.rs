@@ -27,34 +27,29 @@ impl PitchAnalyzer {
         max_pitch_hz: f32,
         clarity_threshold: f32,
     ) -> Option<PitchEstimate> {
-        const TARGET_PITCH_SAMPLE_RATE: u32 = 16_000;
-
-        let downsample = (sample_rate / TARGET_PITCH_SAMPLE_RATE).max(1) as usize;
-        let reduced_len = frame.len() / downsample;
-        if reduced_len < 3 {
+        let frame_len = frame.len();
+        if frame_len < 3 {
             return None;
         }
 
-        self.centered.resize(reduced_len, 0.0);
-        let reduced = &mut self.centered[..reduced_len];
-        fill_downsampled(frame, downsample, reduced);
-        let reduced_sum: f32 = reduced.iter().copied().sum();
+        self.centered.resize(frame_len, 0.0);
+        self.centered[..frame_len].copy_from_slice(frame);
+        let centered = &mut self.centered[..frame_len];
+        let reduced_sum: f32 = centered.iter().copied().sum();
 
-        let mean = reduced_sum / reduced_len as f32;
-        for sample in reduced {
+        let mean = reduced_sum / frame_len as f32;
+        for sample in centered {
             *sample -= mean;
         }
 
-        let effective_sample_rate = sample_rate / downsample as u32;
-        let min_lag = (effective_sample_rate as f32 / max_pitch_hz)
+        let min_lag = (sample_rate as f32 / max_pitch_hz)
             .floor()
             .max(1.0) as usize;
-        let max_lag = (effective_sample_rate as f32 / min_pitch_hz).ceil() as usize;
-        if reduced_len <= max_lag + 1 {
+        let max_lag = (sample_rate as f32 / min_pitch_hz).ceil() as usize;
+        if frame_len <= max_lag + 1 {
             return None;
         }
 
-        let frame_len = reduced_len;
         let upper_lag = max_lag.min(frame_len - 1);
         self.difference.resize(upper_lag + 1, 0.0);
         self.cmndf.resize(upper_lag + 1, 1.0);
@@ -111,7 +106,7 @@ impl PitchAnalyzer {
             return None;
         }
 
-        let hz = effective_sample_rate as f32 / refined_lag;
+        let hz = sample_rate as f32 / refined_lag;
         if hz < min_pitch_hz || hz > max_pitch_hz {
             return None;
         }
@@ -200,33 +195,5 @@ fn normalized_autocorrelation(signal: &[f32], lag: usize) -> f32 {
         0.0
     } else {
         (dot / (energy_a.sqrt() * energy_b.sqrt())).clamp(0.0, 1.0)
-    }
-}
-
-pub(crate) fn fill_downsampled(frame: &[f32], downsample: usize, output: &mut [f32]) {
-    match downsample {
-        1 => output.copy_from_slice(&frame[..output.len()]),
-        2 => {
-            for (chunk, slot) in frame.chunks_exact(2).zip(output.iter_mut()) {
-                *slot = (chunk[0] + chunk[1]) * 0.5;
-            }
-        }
-        3 => {
-            for (chunk, slot) in frame.chunks_exact(3).zip(output.iter_mut()) {
-                *slot = (chunk[0] + chunk[1] + chunk[2]) * (1.0 / 3.0);
-            }
-        }
-        4 => {
-            for (chunk, slot) in frame.chunks_exact(4).zip(output.iter_mut()) {
-                *slot = (chunk[0] + chunk[1] + chunk[2] + chunk[3]) * 0.25;
-            }
-        }
-        _ => {
-            let scale = 1.0 / downsample as f32;
-            for (chunk, slot) in frame.chunks_exact(downsample).zip(output.iter_mut()) {
-                let sum: f32 = chunk.iter().copied().sum();
-                *slot = sum * scale;
-            }
-        }
     }
 }

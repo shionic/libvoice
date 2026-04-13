@@ -43,17 +43,16 @@ pub struct FftSpectrumFrame {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct FormantStats {
-    pub frequency_hz: SummaryStats,
-    pub bandwidth_hz: SummaryStats,
+pub struct HarmonicStats {
+    pub harmonic_number: usize,
+    pub strength_ratio: SummaryStats,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct FormantSummary {
-    pub f1: Option<FormantStats>,
-    pub f2: Option<FormantStats>,
-    pub f3: Option<FormantStats>,
-    pub f4: Option<FormantStats>,
+pub struct HarmonicSummary {
+    pub normalized_to_f0: bool,
+    pub max_frequency_hz: f32,
+    pub harmonics: Vec<HarmonicStats>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -81,7 +80,7 @@ pub struct ChunkAnalysis {
     pub frame_count: usize,
     pub pitch_hz: Option<SummaryStats>,
     pub spectral: Option<SpectralSummary>,
-    pub formants: Option<FormantSummary>,
+    pub harmonics: Option<HarmonicSummary>,
     pub energy: Option<SummaryStats>,
     pub jitter: Option<JitterMetrics>,
 }
@@ -92,7 +91,7 @@ pub struct OverallAnalysis {
     pub frame_count: usize,
     pub pitch_hz: Option<SummaryStats>,
     pub spectral: Option<SpectralSummary>,
-    pub formants: Option<FormantSummary>,
+    pub harmonics: Option<HarmonicSummary>,
     pub energy: Option<SummaryStats>,
     pub jitter: Option<JitterMetrics>,
 }
@@ -125,15 +124,8 @@ pub struct FrameAnalysis {
     pub loudness_dbfs: f32,
     pub hnr_db: f32,
     pub energy: f32,
-    pub formants_hz: Vec<f32>,
-    pub formant_bandwidths_hz: Vec<f32>,
+    pub harmonic_strengths: Vec<Option<f32>>,
     pub cumulative: OverallAnalysis,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct FormantFrame {
-    pub(crate) frequency_hz: f32,
-    pub(crate) bandwidth_hz: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -150,5 +142,6 @@ pub(crate) struct FrameFeatures {
     pub(crate) loudness_dbfs: f32,
     pub(crate) hnr_db: f32,
     pub(crate) energy: f32,
-    pub(crate) formants: Vec<FormantFrame>,
+    pub(crate) harmonic_strengths: Vec<Option<f32>>,
+    pub(crate) trailing_rms: f32,
 }

@@ -5,7 +5,7 @@ pub struct AnalyzeOptions {
     pub spectral: bool,
     pub spectrum: bool,
     pub energy: bool,
-    pub formants: bool,
+    pub harmonics: bool,
     pub graph: bool,
     pub clip: Option<ClipSpec>,
 }
@@ -36,7 +36,7 @@ impl Default for AnalyzeOptions {
             spectral: true,
             spectrum: false,
             energy: false,
-            formants: false,
+            harmonics: false,
             graph: false,
             clip: None,
         }
@@ -67,7 +67,7 @@ pub fn parse_analyze_options(text: &str) -> Result<AnalyzeOptions, String> {
             "spectral" => options.spectral = enabled,
             "spectrum" => options.spectrum = enabled,
             "energy" => options.energy = enabled,
-            "formants" => options.formants = enabled,
+            "harmonics" | "formants" => options.harmonics = enabled,
             "graph" => options.graph = enabled,
             "from" => {
                 if !enabled {
@@ -102,12 +102,12 @@ pub fn parse_analyze_options(text: &str) -> Result<AnalyzeOptions, String> {
                 options.spectral = enabled;
                 options.spectrum = enabled;
                 options.energy = enabled;
-                options.formants = enabled;
+                options.harmonics = enabled;
                 options.graph = enabled;
             }
             _ => {
                 return Err(format!(
-                    "Unknown feature `{token}`.\nUse: +/-pitch, +/-hnr, +/-spectral, +/-spectrum, +/-energy, +/-formants, +/-graph, +/-all, +from, +to, +dur"
+                    "Unknown feature `{token}`.\nUse: +/-pitch, +/-hnr, +/-spectral, +/-spectrum, +/-energy, +/-harmonics, +/-graph, +/-all, +from, +to, +dur"
                 ));
             }
         }
@@ -141,7 +141,7 @@ pub fn parse_analyze_options(text: &str) -> Result<AnalyzeOptions, String> {
 }
 
 pub fn analyze_usage_hint() -> &'static str {
-    "Reply to a voice message or audio file with <code>/analyze</code>.\nDefault sections: <code>+pitch +hnr +spectral</code>\nExtra features: <code>+formants +energy +graph +spectrum</code>\nClip syntax: <code>+from 20s +to 1m40s</code> or <code>+from 20s +dur 20s</code>\nExample: <code>/analyze +graph +spectrum +from 20s +dur 20s -spectral</code>"
+    "Reply to a voice message or audio file with <code>/analyze</code>.\nDefault sections: <code>+pitch +hnr +spectral</code>\nExtra features: <code>+harmonics +energy +graph +spectrum</code>\nClip syntax: <code>+from 20s +to 1m40s</code> or <code>+from 20s +dur 20s</code>\nExample: <code>/analyze +graph +spectrum +from 20s +dur 20s -spectral</code>"
 }
 
 impl ClipSpec {

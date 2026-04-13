@@ -186,6 +186,8 @@ impl VoiceAnalyzer {
         features.pitch_hz.is_some()
             && features.pitch_clarity >= self.config.pitch_clarity_threshold
             && features.rms >= self.config.voiced_rms_threshold
+            && features.trailing_rms >= self.config.voiced_rms_threshold * 0.8
+            && features.trailing_rms >= features.rms * 0.45
             && features.spectral_flatness <= self.config.voiced_max_spectral_flatness
             && features.zcr <= self.config.voiced_max_zero_crossing_rate
     }
@@ -253,16 +255,7 @@ impl VoiceAnalyzer {
             loudness_dbfs: features.loudness_dbfs,
             hnr_db: features.hnr_db,
             energy: features.energy,
-            formants_hz: features
-                .formants
-                .iter()
-                .map(|formant| formant.frequency_hz)
-                .collect(),
-            formant_bandwidths_hz: features
-                .formants
-                .iter()
-                .map(|formant| formant.bandwidth_hz)
-                .collect(),
+            harmonic_strengths: features.harmonic_strengths,
             cumulative,
         }
     }

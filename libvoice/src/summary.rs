@@ -1,5 +1,6 @@
 use crate::model::{
-    ChunkAnalysis, FormantStats, FormantSummary, FrameFeatures, OverallAnalysis, SpectralSummary,
+    ChunkAnalysis, FrameFeatures, HarmonicStats, HarmonicSummary, OverallAnalysis,
+    SpectralSummary,
 };
 use crate::stats::{summarize_optional, summarize_required};
 
@@ -9,7 +10,7 @@ pub(crate) fn empty_overall(processed_samples: usize) -> OverallAnalysis {
         frame_count: 0,
         pitch_hz: None,
         spectral: None,
-        formants: None,
+        harmonics: None,
         energy: None,
         jitter: None,
     }
@@ -27,7 +28,7 @@ pub(crate) fn summarize_chunk(
         frame_count: frames.len(),
         pitch_hz: summarize_optional(summarized_pitch_values(frames).into_iter()),
         spectral: summarize_spectral(frames),
-        formants: summarize_formants(frames),
+        harmonics: summarize_harmonics(frames),
         energy: summarize_required(frames.iter().map(|f| f.energy)),
         jitter: None,
     }
@@ -47,7 +48,7 @@ pub(crate) fn summarize_overall(
         frame_count: frames.len(),
         pitch_hz: summarize_optional(summarized_pitch_values(frames).into_iter()),
         spectral: summarize_spectral(frames),
-        formants: summarize_formants(frames),
+        harmonics: summarize_harmonics(frames),
         energy: summarize_required(frames.iter().map(|f| f.energy)),
         jitter: None,
     }
@@ -74,39 +75,46 @@ fn summarize_spectral(frames: &[FrameFeatures]) -> Option<SpectralSummary> {
     })
 }
 
-fn summarize_formants(frames: &[FrameFeatures]) -> Option<FormantSummary> {
-    let f1 = summarize_formant_slot(frames, 0);
-    let f2 = summarize_formant_slot(frames, 1);
-    let f3 = summarize_formant_slot(frames, 2);
-    let f4 = summarize_formant_slot(frames, 3);
+fn summarize_harmonics(frames: &[FrameFeatures]) -> Option<HarmonicSummary> {
+    let max_harmonics = frames
+        .iter()
+        .map(|frame| frame.harmonic_strengths.len())
+        .max()
+        .unwrap_or(0);
+    if max_harmonics == 0 {
+        return None;
+    }
 
-    if f1.is_none() && f2.is_none() && f3.is_none() && f4.is_none() {
+    let harmonics: Vec<HarmonicStats> = (0..max_harmonics)
+        .filter_map(|index| {
+            let strength_ratio = summarize_optional(
+                frames
+                    .iter()
+                    .filter_map(|frame| frame.harmonic_strengths.get(index).copied().flatten()),
+            )?;
+            Some(HarmonicStats {
+                harmonic_number: index + 1,
+                strength_ratio,
+            })
+        })
+        .collect();
+
+    if harmonics.is_empty() {
         None
     } else {
-        Some(FormantSummary { f1, f2, f3, f4 })
+        let max_frequency_hz = frames
+            .iter()
+            .filter_map(|frame| {
+                frame.pitch_hz.map(|pitch_hz| pitch_hz * frame.harmonic_strengths.len() as f32)
+            })
+            .fold(0.0_f32, f32::max);
+
+        Some(HarmonicSummary {
+            normalized_to_f0: true,
+            max_frequency_hz,
+            harmonics,
+        })
     }
-}
-
-fn summarize_formant_slot(frames: &[FrameFeatures], index: usize) -> Option<FormantStats> {
-    let frequency_hz = summarize_optional(frames.iter().filter_map(|frame| {
-        frame
-            .formants
-            .get(index)
-            .filter(|formant| formant.frequency_hz > 0.0)
-            .map(|formant| formant.frequency_hz)
-    }))?;
-    let bandwidth_hz = summarize_optional(frames.iter().filter_map(|frame| {
-        frame
-            .formants
-            .get(index)
-            .filter(|formant| formant.bandwidth_hz > 0.0)
-            .map(|formant| formant.bandwidth_hz)
-    }))?;
-
-    Some(FormantStats {
-        frequency_hz,
-        bandwidth_hz,
-    })
 }
 
 fn summarized_pitch_values(frames: &[FrameFeatures]) -> Vec<f32> {

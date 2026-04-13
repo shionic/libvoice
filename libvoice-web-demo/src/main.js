@@ -39,10 +39,10 @@ const metricDefinitions = {
     ["spectralFlatness", "Flatness"],
     ["spectralTiltDbPerOctave", "Tilt dB/Oct"],
     ["zcr", "ZCR"],
-    ["f1Hz", "F1 Hz"],
-    ["f2Hz", "F2 Hz"],
-    ["f3Hz", "F3 Hz"],
-    ["f4Hz", "F4 Hz"],
+    ["h1Strength", "H1 Strength"],
+    ["h2Strength", "H2 Strength"],
+    ["h3Strength", "H3 Strength"],
+    ["h4Strength", "H4 Strength"],
   ],
   summary: [
     ["frameCount", "Voiced Frames"],
@@ -229,12 +229,15 @@ function smoothMomentData(frames) {
   const pitchValues = frames
     .map((frame) => getField(frame, "pitch_hz", "pitchHz"))
     .filter(isFiniteNumber);
-  const formantValues = [0, 1, 2, 3].map((index) =>
+  const harmonicValues = [0, 1, 2, 3].map((index) =>
     frames
       .map((frame) =>
-        readArrayValue(getField(frame, "formants_hz", "formantsHz"), index),
+        readArrayValue(
+          getField(frame, "harmonic_strengths", "harmonicStrengths"),
+          index,
+        ),
       )
-      .filter((value) => isFiniteNumber(value) && value > 0),
+      .filter(isFiniteNumber),
   );
 
   return {
@@ -274,10 +277,10 @@ function smoothMomentData(frames) {
       ),
     ),
     zcr: mean(frames.map((frame) => getField(frame, "zcr"))),
-    f1Hz: mean(formantValues[0]),
-    f2Hz: mean(formantValues[1]),
-    f3Hz: mean(formantValues[2]),
-    f4Hz: mean(formantValues[3]),
+    h1Strength: mean(harmonicValues[0]),
+    h2Strength: mean(harmonicValues[1]),
+    h3Strength: mean(harmonicValues[2]),
+    h4Strength: mean(harmonicValues[3]),
   };
 }
 
@@ -285,7 +288,20 @@ function summarizeChunkFields(chunk) {
   const pitch = getField(chunk, "pitch_hz", "pitchHz");
   const energy = getField(chunk, "energy");
   const spectral = getField(chunk, "spectral");
-  const formants = getField(chunk, "formants");
+  const harmonics = getField(chunk, "harmonics");
+  const harmonicList = getField(harmonics, "harmonics") ?? [];
+  const getHarmonicMean = (harmonicNumber) =>
+    getField(
+      getField(
+        harmonicList.find(
+          (harmonic) =>
+            getField(harmonic, "harmonic_number", "harmonicNumber") === harmonicNumber,
+        ),
+        "strength_ratio",
+        "strengthRatio",
+      ),
+      "mean",
+    );
 
   return {
     frameCount: getField(chunk, "frame_count", "frameCount"),
@@ -313,22 +329,10 @@ function summarizeChunkFields(chunk) {
       "mean",
     ),
     zcrMean: getField(getField(spectral, "zcr"), "mean"),
-    f1MeanHz: getField(
-      getField(getField(formants, "f1"), "frequency_hz", "frequencyHz"),
-      "mean",
-    ),
-    f2MeanHz: getField(
-      getField(getField(formants, "f2"), "frequency_hz", "frequencyHz"),
-      "mean",
-    ),
-    f3MeanHz: getField(
-      getField(getField(formants, "f3"), "frequency_hz", "frequencyHz"),
-      "mean",
-    ),
-    f4MeanHz: getField(
-      getField(getField(formants, "f4"), "frequency_hz", "frequencyHz"),
-      "mean",
-    ),
+    h1Strength: getHarmonicMean(1),
+    h2Strength: getHarmonicMean(2),
+    h3Strength: getHarmonicMean(3),
+    h4Strength: getHarmonicMean(4),
   };
 }
 

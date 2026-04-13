@@ -24,34 +24,27 @@ fn synth_noise(sample_rate: u32, seconds: f32, amplitude: f32) -> Vec<f32> {
         .collect()
 }
 
-fn synth_vowel_like(
+fn synth_harmonic_stack(
     sample_rate: u32,
     pitch_hz: f32,
     seconds: f32,
-    formants: &[(f32, f32)],
+    harmonic_amplitudes: &[f32],
 ) -> Vec<f32> {
     let total = (sample_rate as f32 * seconds) as usize;
-    let period = (sample_rate as f32 / pitch_hz).round().max(1.0) as usize;
     let mut output = vec![0.0_f32; total];
 
-    for index in (0..total).step_by(period) {
-        output[index] = 1.0;
-    }
-
-    for &(frequency_hz, bandwidth_hz) in formants {
-        let radius = (-std::f32::consts::PI * bandwidth_hz / sample_rate as f32).exp();
-        let angle = 2.0 * std::f32::consts::PI * frequency_hz / sample_rate as f32;
-        let a1 = 2.0 * radius * angle.cos();
-        let a2 = -(radius * radius);
-        let mut y1 = 0.0_f32;
-        let mut y2 = 0.0_f32;
-
-        for sample in &mut output {
-            let y0 = *sample + a1 * y1 + a2 * y2;
-            *sample = y0;
-            y2 = y1;
-            y1 = y0;
+    for (index, sample) in output.iter_mut().enumerate() {
+        let t = index as f32 / sample_rate as f32;
+        let mut value = 0.0_f32;
+        for (harmonic_index, amplitude) in harmonic_amplitudes.iter().copied().enumerate() {
+            if amplitude <= 0.0 {
+                continue;
+            }
+            let harmonic_number = harmonic_index + 1;
+            value += amplitude
+                * (2.0 * PI * pitch_hz * harmonic_number as f32 * t).sin();
         }
+        *sample = value;
     }
 
     let peak = output
@@ -171,7 +164,8 @@ fn streaming_can_return_frame_level_results() {
     assert!(frames[0].start_seconds >= 0.0);
     assert!(frames[0].end_seconds > frames[0].start_seconds);
     assert!(frames[0].pitch_hz.is_some());
-    assert!(frames[0].formants_hz.len() <= 4);
+    assert!(!frames[0].harmonic_strengths.is_empty());
+    assert_eq!(frames[0].harmonic_strengths[0], Some(1.0));
     assert_eq!(frames[0].cumulative.frame_count, 1);
     assert_eq!(frames.last().unwrap().cumulative, overall);
 }
@@ -289,6 +283,27 @@ fn mixed_signal_excludes_silence_and_noise_from_voiced_metrics() {
 }
 
 #[test]
+fn speech_offset_frames_with_silent_tails_are_rejected() {
+    let sample_rate = 16_000;
+    let config = AnalyzerConfig::new(sample_rate);
+
+    let mut samples = synth_sine(sample_rate, 220.0, 0.9, 0.5);
+    samples.extend(vec![0.0_f32; (sample_rate as f32 * 0.5) as usize]);
+
+    let report = VoiceAnalyzer::analyze_buffer(config, &samples);
+
+    assert!(!report.frames.is_empty());
+    let last = report.frames.last().unwrap();
+    let frame_midpoint = 0.5 * (last.start_seconds + last.end_seconds);
+    assert!(
+        frame_midpoint <= 0.9 + 0.01,
+        "last voiced midpoint should stay inside spoken region, got frame {:.3}-{:.3}s",
+        last.start_seconds,
+        last.end_seconds
+    );
+}
+
+#[test]
 fn voiced_sine_produces_concentrated_spectral_summary() {
     let sample_rate = 16_000;
     let config = AnalyzerConfig::new(sample_rate);
@@ -309,76 +324,89 @@ fn voiced_sine_produces_concentrated_spectral_summary() {
 }
 
 #[test]
-fn vowel_like_signal_produces_stable_lpc_formants() {
+fn harmonic_stack_reports_normalized_harmonic_strengths() {
     let sample_rate = 16_000;
     let config = AnalyzerConfig::new(sample_rate);
-    let samples = synth_vowel_like(sample_rate, 140.0, 1.2, &[(730.0, 80.0), (1_090.0, 100.0)]);
+    let samples = synth_harmonic_stack(sample_rate, 140.0, 1.2, &[1.0, 0.5, 0.0, 0.25, 0.1]);
 
     let report = VoiceAnalyzer::analyze_buffer(config, &samples);
-    let formants = report
+    let harmonics = report
         .overall
-        .formants
-        .expect("vowel-like voiced signal should expose formants");
+        .harmonics
+        .expect("voiced harmonic stack should expose harmonics");
 
-    let f1 = formants.f1.expect("expected F1");
-    let f2 = formants.f2.expect("expected F2");
-    approx_eq(f1.frequency_hz.mean, 730.0, 120.0);
-    approx_eq(f2.frequency_hz.mean, 1_090.0, 180.0);
-    assert!(f1.bandwidth_hz.mean > 20.0);
-    assert!(f2.bandwidth_hz.mean > 20.0);
+    assert!(harmonics.normalized_to_f0);
+    let first = &harmonics.harmonics[0];
+    assert_eq!(first.harmonic_number, 1);
+    approx_eq(first.strength_ratio.mean, 1.0, 0.05);
+
+    let second = harmonics
+        .harmonics
+        .iter()
+        .find(|harmonic| harmonic.harmonic_number == 2)
+        .unwrap();
+    approx_eq(second.strength_ratio.mean, 0.5, 0.12);
+
+    let third = harmonics
+        .harmonics
+        .iter()
+        .find(|harmonic| harmonic.harmonic_number == 3);
+    assert!(third.is_none(), "weak or absent harmonics should not be reindexed");
+
+    let fourth = harmonics
+        .harmonics
+        .iter()
+        .find(|harmonic| harmonic.harmonic_number == 4)
+        .unwrap();
+    approx_eq(fourth.strength_ratio.mean, 0.25, 0.12);
 }
 
 #[test]
-fn streaming_matches_formants_for_vowel_like_signal() {
+fn streaming_matches_harmonic_strengths_for_harmonic_stack() {
     let sample_rate = 16_000;
     let config = AnalyzerConfig::new(sample_rate);
-    let samples = synth_vowel_like(sample_rate, 140.0, 1.2, &[(730.0, 80.0), (1_090.0, 100.0)]);
+    let samples = synth_harmonic_stack(sample_rate, 140.0, 1.2, &[1.0, 0.5, 0.0, 0.25, 0.1]);
 
     let full = VoiceAnalyzer::analyze_buffer(config.clone(), &samples);
     let streamed = VoiceAnalyzer::analyze_buffer_in_chunks(config, &samples, 317);
 
     assert_reports_close(&full, &streamed);
 
-    let full_formants = full.overall.formants.as_ref().unwrap();
-    let streamed_formants = streamed.overall.formants.as_ref().unwrap();
+    let full_harmonics = full.overall.harmonics.as_ref().unwrap();
+    let streamed_harmonics = streamed.overall.harmonics.as_ref().unwrap();
     approx_eq(
-        full_formants.f1.as_ref().unwrap().frequency_hz.mean,
-        streamed_formants.f1.as_ref().unwrap().frequency_hz.mean,
+        full_harmonics.harmonics[0].strength_ratio.mean,
+        streamed_harmonics.harmonics[0].strength_ratio.mean,
         0.1,
     );
     approx_eq(
-        full_formants.f2.as_ref().unwrap().frequency_hz.mean,
-        streamed_formants.f2.as_ref().unwrap().frequency_hz.mean,
+        full_harmonics.harmonics[1].strength_ratio.mean,
+        streamed_harmonics.harmonics[1].strength_ratio.mean,
         0.1,
     );
 }
 
 #[test]
-fn formants_remain_stable_across_sample_rates() {
+fn harmonic_count_expands_with_available_frequency_range() {
     let low_rate = 16_000;
     let high_rate = 48_000;
+    let harmonic_amplitudes: Vec<f32> = (1..=60).map(|harmonic| 1.0 / harmonic as f32).collect();
     let low_report = VoiceAnalyzer::analyze_buffer(
         AnalyzerConfig::new(low_rate),
-        &synth_vowel_like(low_rate, 140.0, 1.2, &[(730.0, 80.0), (1_090.0, 100.0)]),
+        &synth_harmonic_stack(low_rate, 110.0, 1.2, &harmonic_amplitudes),
     );
     let high_report = VoiceAnalyzer::analyze_buffer(
         AnalyzerConfig::new(high_rate),
-        &synth_vowel_like(high_rate, 140.0, 1.2, &[(730.0, 80.0), (1_090.0, 100.0)]),
+        &synth_harmonic_stack(high_rate, 110.0, 1.2, &harmonic_amplitudes),
     );
 
-    let low_formants = low_report.overall.formants.as_ref().unwrap();
-    let high_formants = high_report.overall.formants.as_ref().unwrap();
+    let low_harmonics = low_report.overall.harmonics.as_ref().unwrap();
+    let high_harmonics = high_report.overall.harmonics.as_ref().unwrap();
 
-    approx_eq(
-        low_formants.f1.as_ref().unwrap().frequency_hz.mean,
-        high_formants.f1.as_ref().unwrap().frequency_hz.mean,
-        70.0,
-    );
-    approx_eq(
-        low_formants.f2.as_ref().unwrap().frequency_hz.mean,
-        high_formants.f2.as_ref().unwrap().frequency_hz.mean,
-        90.0,
-    );
+    assert!(low_harmonics.harmonics.len() >= 40);
+    assert!(high_harmonics.harmonics.len() >= low_harmonics.harmonics.len());
+    assert!(low_harmonics.max_frequency_hz <= 5_000.0 + 150.0);
+    assert!(high_harmonics.max_frequency_hz <= 5_000.0 + 150.0);
 }
 
 #[test]
@@ -394,7 +422,7 @@ fn report_serializes_to_json() {
     assert!(json.contains("\"chunks\""));
     assert!(json.contains("\"spectral\""));
     assert!(json.contains("\"tilt_db_per_octave\""));
-    assert!(json.contains("\"formants\""));
+    assert!(json.contains("\"harmonics\""));
 }
 
 #[test]

@@ -1,6 +1,6 @@
 use crate::audio::DecodedAudio;
 use crate::options::AnalyzeOptions;
-use libvoice::{AnalysisReport, FormantSummary, SpectralSummary, SummaryStats};
+use libvoice::{AnalysisReport, HarmonicSummary, SpectralSummary, SummaryStats};
 use std::fmt::Write as _;
 
 pub fn format_report(
@@ -74,13 +74,13 @@ pub fn format_report(
         printed_section = true;
     }
 
-    if options.formants {
+    if options.harmonics {
         writeln!(&mut out).unwrap();
-        writeln!(&mut out, "<b>Formants</b>").unwrap();
+        writeln!(&mut out, "<b>Harmonics</b>").unwrap();
         writeln!(
             &mut out,
             "<pre>{}</pre>",
-            escape_html(&format_formants_section(overall.formants.as_ref()))
+            escape_html(&format_harmonics_section(overall.harmonics.as_ref()))
         )
         .unwrap();
         printed_section = true;
@@ -92,9 +92,9 @@ pub fn format_report(
     }
 
     writeln!(&mut out).unwrap();
-    writeln!(
+        writeln!(
         &mut out,
-        "<i>Tip:</i> <code>+energy</code>, <code>+formants</code>, <code>+graph</code>, and <code>+spectrum</code> add more detail. Use <code>-feature</code> to hide a section."
+        "<i>Tip:</i> <code>+energy</code>, <code>+harmonics</code>, <code>+graph</code>, and <code>+spectrum</code> add more detail. Use <code>-feature</code> to hide a section."
     )
     .unwrap();
 
@@ -159,28 +159,33 @@ fn format_spectral_section(spectral: Option<&SpectralSummary>) -> String {
     .join("\n\n")
 }
 
-fn format_formants_section(formants: Option<&FormantSummary>) -> String {
-    let Some(formants) = formants else {
-        return "formants: unavailable".to_string();
+fn format_harmonics_section(harmonics: Option<&HarmonicSummary>) -> String {
+    let Some(harmonics) = harmonics else {
+        return "harmonics: unavailable".to_string();
     };
 
     let mut lines = Vec::new();
-    for (label, formant) in [
-        ("f1", formants.f1.as_ref()),
-        ("f2", formants.f2.as_ref()),
-        ("f3", formants.f3.as_ref()),
-        ("f4", formants.f4.as_ref()),
-    ] {
-        match formant {
-            Some(formant) => lines.push(format!(
-                "{label} center   : {} Hz\n{label} std      : {}\n{label} bw mean  : {} Hz\n{label} bw std   : {}",
-                format_value(formant.frequency_hz.mean),
-                format_value(formant.frequency_hz.std),
-                format_value(formant.bandwidth_hz.mean),
-                format_value(formant.bandwidth_hz.std)
-            )),
-            None => lines.push(format!("{label}          : unavailable")),
-        }
+    lines.push(format!(
+        "normalized  : F0 = 1\nmax range   : {} Hz",
+        format_value(harmonics.max_frequency_hz)
+    ));
+    for harmonic in harmonics.harmonics.iter().take(10) {
+        lines.push(format!(
+            "h{:02} mean    : {}\nh{:02} std     : {}\nh{:02} p5..p95 : {} .. {}",
+            harmonic.harmonic_number,
+            format_value(harmonic.strength_ratio.mean),
+            harmonic.harmonic_number,
+            format_value(harmonic.strength_ratio.std),
+            harmonic.harmonic_number,
+            format_value(harmonic.strength_ratio.p5),
+            format_value(harmonic.strength_ratio.p95)
+        ));
+    }
+    if harmonics.harmonics.len() > 10 {
+        lines.push(format!(
+            "... {} more harmonics",
+            harmonics.harmonics.len() - 10
+        ));
     }
     lines.join("\n\n")
 }
