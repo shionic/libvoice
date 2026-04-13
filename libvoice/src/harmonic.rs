@@ -38,19 +38,14 @@ impl HarmonicAnalyzer {
         }
 
         let harmonic_count = (max_frequency_hz / f0_hz).floor().max(1.0) as usize;
-        let mut band_powers = Vec::with_capacity(harmonic_count);
-        for harmonic_number in 1..=harmonic_count {
-            band_powers.push(measure_harmonic_band_power(
-                magnitudes.len(),
-                bin_hz,
-                f0_hz,
-                harmonic_number,
-                max_frequency_hz,
-                &self.power_prefix_sums,
-            ));
-        }
-
-        let Some(fundamental_power) = band_powers.first().copied().flatten() else {
+        let Some(fundamental_power) = measure_harmonic_band_power(
+            magnitudes.len(),
+            bin_hz,
+            f0_hz,
+            1,
+            max_frequency_hz,
+            &self.power_prefix_sums,
+        ) else {
             return vec![None; harmonic_count];
         };
         if fundamental_power <= 1.0e-12 {
@@ -59,7 +54,15 @@ impl HarmonicAnalyzer {
 
         let mut strengths = Vec::with_capacity(harmonic_count);
         strengths.push(Some(1.0));
-        for band_power in band_powers.into_iter().skip(1) {
+        for harmonic_number in 2..=harmonic_count {
+            let band_power = measure_harmonic_band_power(
+                magnitudes.len(),
+                bin_hz,
+                f0_hz,
+                harmonic_number,
+                max_frequency_hz,
+                &self.power_prefix_sums,
+            );
             let Some(band_power) = band_power else {
                 strengths.push(None);
                 continue;

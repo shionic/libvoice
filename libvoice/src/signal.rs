@@ -128,23 +128,6 @@ pub(crate) fn hann_window(size: usize) -> Vec<f32> {
         .collect()
 }
 
-pub(crate) fn zero_crossing_rate(frame: &[f32]) -> f32 {
-    if frame.len() < 2 {
-        return 0.0;
-    }
-
-    let mut crossings = 0usize;
-    let mut prev = frame[0];
-    for &sample in &frame[1..] {
-        if (prev >= 0.0 && sample < 0.0) || (prev < 0.0 && sample >= 0.0) {
-            crossings += 1;
-        }
-        prev = sample;
-    }
-
-    crossings as f32 / (frame.len() - 1) as f32
-}
-
 pub(crate) fn estimate_hnr_db(periodicity: f32) -> f32 {
     if periodicity <= 0.0 {
         return 0.0;
