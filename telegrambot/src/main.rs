@@ -5,7 +5,7 @@ mod options;
 mod report;
 
 use audio::{analyze_samples, audio_duration_seconds, clip_audio_seconds, decode_audio_bytes};
-use graphs::{GraphImage, build_spectrum_graph, generate_graphs};
+use graphs::{GraphImage, build_spectrum_feature_graphs, generate_graphs};
 use input::find_input_audio;
 use options::{ResolvedClip, analyze_usage_hint, parse_analyze_options};
 use report::format_report;
@@ -127,9 +127,7 @@ async fn handle_message(bot: Bot, msg: Message) -> Result<(), String> {
             Vec::new()
         };
         if options.spectrum {
-            if let Some(graph) = build_spectrum_graph(&report)? {
-                graphs.push(graph);
-            }
+            graphs.extend(build_spectrum_feature_graphs(&report)?);
         }
         Ok::<_, String>((report_text, graphs))
     })

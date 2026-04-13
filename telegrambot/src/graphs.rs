@@ -4,8 +4,8 @@ use libvoice::{AnalysisReport, FrameAnalysis};
 use plotters::coord::types::RangedCoordf32;
 use plotters::prelude::*;
 
-const WIDTH: u32 = 1280;
-const HEIGHT: u32 = 720;
+const WIDTH: u32 = 2560;
+const HEIGHT: u32 = 1440;
 type Chart2d<'a, 'b> =
     ChartContext<'a, BitMapBackend<'b>, Cartesian2d<RangedCoordf32, RangedCoordf32>>;
 
@@ -149,6 +149,41 @@ pub fn build_spectrum_graph(report: &AnalysisReport) -> Result<Option<GraphImage
         title: "Voice spectrogram".to_string(),
         png_bytes: encode_png(buffer, WIDTH, HEIGHT)?,
     }))
+}
+
+pub fn build_spectrum_feature_graphs(report: &AnalysisReport) -> Result<Vec<GraphImage>, String> {
+    let Some(spectrum) = report.fft_spectrum.as_ref() else {
+        return Ok(Vec::new());
+    };
+    if spectrum.frames.is_empty() || spectrum.bin_hz <= 0.0 {
+        return Ok(Vec::new());
+    }
+
+    let bin_count = spectrum.frames[0].magnitudes.len();
+    if bin_count < 8 {
+        return Ok(Vec::new());
+    }
+
+    let nyquist_hz = (bin_count.saturating_sub(1)) as f32 * spectrum.bin_hz;
+    let max_hz = nyquist_hz.min(5_000.0);
+    let max_bin = (max_hz / spectrum.bin_hz).floor() as usize;
+    if max_bin < 8 {
+        return Ok(Vec::new());
+    }
+
+    let mut graphs = Vec::new();
+
+    if let Some(graph) = build_spectrum_graph(report)? {
+        graphs.push(graph);
+    }
+    if let Some(graph) = build_power_envelope_graph(spectrum, max_bin, max_hz)? {
+        graphs.push(graph);
+    }
+    if let Some(graph) = build_envelope_spectrogram_graph(spectrum, max_bin, max_hz)? {
+        graphs.push(graph);
+    }
+
+    Ok(graphs)
 }
 
 fn build_pitch_graph(frames: &[FrameAnalysis]) -> Result<Option<GraphImage>, String> {
@@ -429,6 +464,168 @@ fn build_spectral_graph(frames: &[FrameAnalysis]) -> Result<Option<GraphImage>, 
     .map(Some)
 }
 
+fn build_power_envelope_graph(
+    spectrum: &libvoice::FftSpectrum,
+    max_bin: usize,
+    max_hz: f32,
+) -> Result<Option<GraphImage>, String> {
+    let averaged = average_power_spectrum(spectrum, max_bin);
+    if averaged.len() < 8 {
+        return Ok(None);
+    }
+
+    let envelope = spectral_envelope(&averaged, 10);
+    let envelope_db = envelope_to_db(&envelope);
+    let raw_db = envelope_to_db(&averaged);
+    let y_range = padded_range(&envelope_db, 0.08, 6.0);
+
+    let mut buffer = vec![255u8; (WIDTH * HEIGHT * 3) as usize];
+    let root = BitMapBackend::with_buffer(&mut buffer, (WIDTH, HEIGHT)).into_drawing_area();
+    root.fill(&WHITE).map_err(draw_err)?;
+
+    let mut chart = ChartBuilder::on(&root)
+        .margin(24)
+        .caption("Spectrum envelope", ("sans-serif", 34))
+        .x_label_area_size(56)
+        .y_label_area_size(84)
+        .build_cartesian_2d(0.0_f32..max_hz, y_range)
+        .map_err(draw_err)?;
+
+    chart
+        .configure_mesh()
+        .x_desc("Frequency (Hz)")
+        .y_desc("Power (dB)")
+        .light_line_style(RGBColor(220, 220, 220))
+        .draw()
+        .map_err(draw_err)?;
+
+    chart
+        .draw_series(LineSeries::new(
+            raw_db
+                .iter()
+                .enumerate()
+                .map(|(bin, value)| (bin as f32 * spectrum.bin_hz, *value)),
+            RGBColor(160, 185, 220),
+        ))
+        .map_err(draw_err)?
+        .label("Average power")
+        .legend(|(x, y)| {
+            PathElement::new(vec![(x, y), (x + 24, y)], RGBColor(160, 185, 220))
+        });
+
+    chart
+        .draw_series(LineSeries::new(
+            envelope_db
+                .iter()
+                .enumerate()
+                .map(|(bin, value)| (bin as f32 * spectrum.bin_hz, *value)),
+            RED.stroke_width(4),
+        ))
+        .map_err(draw_err)?
+        .label("Peak envelope")
+        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 24, y)], RED.stroke_width(4)));
+
+    chart
+        .configure_series_labels()
+        .background_style(WHITE.mix(0.9))
+        .border_style(BLACK)
+        .draw()
+        .map_err(draw_err)?;
+
+    drop(chart);
+    root.present().map_err(draw_err)?;
+    drop(root);
+
+    Ok(Some(GraphImage {
+        file_name: "spectrum_envelope.png".to_string(),
+        title: "Spectrum envelope".to_string(),
+        png_bytes: encode_png(buffer, WIDTH, HEIGHT)?,
+    }))
+}
+
+fn build_envelope_spectrogram_graph(
+    spectrum: &libvoice::FftSpectrum,
+    max_bin: usize,
+    max_hz: f32,
+) -> Result<Option<GraphImage>, String> {
+    let x_range = spectrum.frames[0].start_seconds
+        ..spectrum.frames.last().map(|frame| frame.end_seconds).unwrap_or(0.01);
+    let y_range = 0.0_f32..max_hz;
+
+    let mut peak_db = f32::NEG_INFINITY;
+    let mut smoothed_frames = Vec::with_capacity(spectrum.frames.len());
+    for frame in &spectrum.frames {
+        let powers = frame
+            .magnitudes
+            .iter()
+            .take(max_bin + 1)
+            .map(|magnitude| magnitude * magnitude)
+            .collect::<Vec<_>>();
+        let smoothed = spectral_envelope(&powers, 10);
+        for value in smoothed.iter().skip(1) {
+            peak_db = peak_db.max(power_to_db(*value));
+        }
+        smoothed_frames.push((frame.start_seconds, frame.end_seconds, frame.is_voiced, smoothed));
+    }
+
+    if !peak_db.is_finite() {
+        return Ok(None);
+    }
+
+    let mut buffer = vec![255u8; (WIDTH * HEIGHT * 3) as usize];
+    let root = BitMapBackend::with_buffer(&mut buffer, (WIDTH, HEIGHT)).into_drawing_area();
+    root.fill(&WHITE).map_err(draw_err)?;
+
+    let mut chart = ChartBuilder::on(&root)
+        .margin(24)
+        .caption("Envelope spectrogram", ("sans-serif", 34))
+        .x_label_area_size(56)
+        .y_label_area_size(72)
+        .build_cartesian_2d(x_range, y_range)
+        .map_err(draw_err)?;
+
+    chart
+        .configure_mesh()
+        .x_desc("Time (s)")
+        .y_desc("Frequency (Hz)")
+        .light_line_style(RGBColor(220, 220, 220))
+        .draw()
+        .map_err(draw_err)?;
+
+    for (start, end, is_voiced, smoothed) in smoothed_frames {
+        for bin in 1..smoothed.len() {
+            let lower_hz = (bin - 1) as f32 * spectrum.bin_hz;
+            let upper_hz = bin as f32 * spectrum.bin_hz;
+            let db = power_to_db(smoothed[bin]);
+            let normalized = ((db - peak_db + 80.0) / 80.0).clamp(0.0, 1.0);
+            let color = spectrogram_color(normalized, is_voiced);
+            chart
+                .draw_series(std::iter::once(Rectangle::new(
+                    [(start, lower_hz), (end, upper_hz)],
+                    color.filled(),
+                )))
+                .map_err(draw_err)?;
+        }
+    }
+
+    chart
+        .configure_series_labels()
+        .background_style(BLACK.mix(0.55))
+        .border_style(WHITE)
+        .draw()
+        .map_err(draw_err)?;
+
+    drop(chart);
+    root.present().map_err(draw_err)?;
+    drop(root);
+
+    Ok(Some(GraphImage {
+        file_name: "envelope_spectrogram.png".to_string(),
+        title: "Envelope spectrogram".to_string(),
+        png_bytes: encode_png(buffer, WIDTH, HEIGHT)?,
+    }))
+}
+
 fn render_graph<F>(
     title: &str,
     y_desc: &str,
@@ -611,6 +808,71 @@ fn encode_png(buffer: Vec<u8>, width: u32, height: u32) -> Result<Vec<u8>, Strin
         .write_image(&buffer, width, height, ColorType::Rgb8.into())
         .map_err(|error| format!("failed to encode graph png: {error}"))?;
     Ok(png_bytes)
+}
+
+fn average_power_spectrum(spectrum: &libvoice::FftSpectrum, max_bin: usize) -> Vec<f32> {
+    let mut sum = vec![0.0; max_bin + 1];
+    let mut count = 0usize;
+
+    for frame in &spectrum.frames {
+        if !frame.is_voiced {
+            continue;
+        }
+        for (bin, magnitude) in frame.magnitudes.iter().take(max_bin + 1).enumerate() {
+            sum[bin] += magnitude * magnitude;
+        }
+        count += 1;
+    }
+
+    if count == 0 {
+        for frame in &spectrum.frames {
+            for (bin, magnitude) in frame.magnitudes.iter().take(max_bin + 1).enumerate() {
+                sum[bin] += magnitude * magnitude;
+            }
+        }
+        count = spectrum.frames.len();
+    }
+
+    if count == 0 {
+        return Vec::new();
+    }
+
+    sum.into_iter().map(|value| value / count as f32).collect()
+}
+
+fn spectral_envelope(power: &[f32], window_radius: usize) -> Vec<f32> {
+    if power.is_empty() {
+        return Vec::new();
+    }
+
+    let mut peaks = vec![0.0; power.len()];
+    for index in 0..power.len() {
+        let start = index.saturating_sub(window_radius);
+        let end = (index + window_radius + 1).min(power.len());
+        let mut peak: f32 = 0.0;
+        for value in &power[start..end] {
+            peak = peak.max(*value);
+        }
+        peaks[index] = peak;
+    }
+
+    let mut smoothed = vec![0.0; power.len()];
+    for index in 0..power.len() {
+        let start = index.saturating_sub(window_radius);
+        let end = (index + window_radius + 1).min(power.len());
+        let slice = &peaks[start..end];
+        let sum: f32 = slice.iter().sum();
+        smoothed[index] = sum / slice.len() as f32;
+    }
+    smoothed
+}
+
+fn envelope_to_db(values: &[f32]) -> Vec<f32> {
+    values.iter().map(|value| power_to_db(*value)).collect()
+}
+
+fn power_to_db(value: f32) -> f32 {
+    10.0 * value.max(1.0e-24).log10()
 }
 
 fn slugify(title: &str) -> String {

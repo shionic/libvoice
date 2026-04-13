@@ -424,6 +424,7 @@ fn analyze_file_with_symphonia(path: &Path, args: &Args) -> Result<FileAnalysisO
 }
 
 fn analyze_file_with_ffmpeg(path: &Path, args: &Args) -> Result<FileAnalysisOutput, String> {
+    let sample_rate = probe_sample_rate_with_ffprobe(path)?;
     let mut child = Command::new("ffmpeg")
         .arg("-v")
         .arg("error")
@@ -433,8 +434,6 @@ fn analyze_file_with_ffmpeg(path: &Path, args: &Args) -> Result<FileAnalysisOutp
         .arg("f32le")
         .arg("-ac")
         .arg("1")
-        .arg("-ar")
-        .arg("16000")
         .arg("-")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -486,7 +485,6 @@ fn analyze_file_with_ffmpeg(path: &Path, args: &Args) -> Result<FileAnalysisOutp
         .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
         .collect();
 
-    let sample_rate = 16_000;
     let mut analyzer = VoiceAnalyzer::new(build_config(sample_rate, args));
     let (chunk, voiced_frames) = analyzer.process_chunk_with_frames(&samples);
     let report = AnalysisReport {
@@ -508,6 +506,44 @@ fn analyze_file_with_ffmpeg(path: &Path, args: &Args) -> Result<FileAnalysisOutp
         voiced_intervals: merge_voiced_intervals(&voiced_frames),
         voiced_frames,
     })
+}
+
+fn probe_sample_rate_with_ffprobe(path: &Path) -> Result<u32, String> {
+    let output = Command::new("ffprobe")
+        .arg("-v")
+        .arg("error")
+        .arg("-select_streams")
+        .arg("a:0")
+        .arg("-show_entries")
+        .arg("stream=sample_rate")
+        .arg("-of")
+        .arg("default=noprint_wrappers=1:nokey=1")
+        .arg(path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|error| format!("{}: failed to run ffprobe: {error}", path.display()))?;
+
+    if !output.status.success() {
+        let stderr_text = String::from_utf8_lossy(&output.stderr);
+        let detail = stderr_text.trim();
+        return Err(if detail.is_empty() {
+            format!("{}: ffprobe exited with {}", path.display(), output.status)
+        } else {
+            format!("{}: {detail}", path.display())
+        });
+    }
+
+    let sample_rate = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse::<u32>()
+        .map_err(|error| format!("{}: failed to parse ffprobe sample rate: {error}", path.display()))?;
+    if sample_rate == 0 {
+        return Err(format!("{}: ffprobe reported a zero sample rate", path.display()));
+    }
+
+    Ok(sample_rate)
 }
 
 fn build_config(sample_rate: u32, args: &Args) -> AnalyzerConfig {

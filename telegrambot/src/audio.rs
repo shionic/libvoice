@@ -12,8 +12,6 @@ use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 use tempfile::NamedTempFile;
 
-const SAMPLE_RATE: u32 = 16_000;
-
 #[derive(Clone, Debug)]
 pub struct DecodedAudio {
     pub backend: &'static str,
@@ -166,6 +164,7 @@ fn decode_audio_bytes_with_ffmpeg(bytes: &[u8]) -> Result<DecodedAudio, String> 
     temp_input
         .flush()
         .map_err(|error| format!("failed to flush temp audio file: {error}"))?;
+    let sample_rate = probe_sample_rate_with_ffprobe(temp_input.path())?;
 
     let output = std::process::Command::new("ffmpeg")
         .arg("-nostdin")
@@ -177,8 +176,6 @@ fn decode_audio_bytes_with_ffmpeg(bytes: &[u8]) -> Result<DecodedAudio, String> 
         .arg("f32le")
         .arg("-ac")
         .arg("1")
-        .arg("-ar")
-        .arg(SAMPLE_RATE.to_string())
         .arg("pipe:1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -207,10 +204,47 @@ fn decode_audio_bytes_with_ffmpeg(bytes: &[u8]) -> Result<DecodedAudio, String> 
 
     Ok(DecodedAudio {
         backend: "ffmpeg",
-        sample_rate: SAMPLE_RATE,
+        sample_rate,
         channels: 1,
         samples,
     })
+}
+
+fn probe_sample_rate_with_ffprobe(path: &Path) -> Result<u32, String> {
+    let output = std::process::Command::new("ffprobe")
+        .arg("-v")
+        .arg("error")
+        .arg("-select_streams")
+        .arg("a:0")
+        .arg("-show_entries")
+        .arg("stream=sample_rate")
+        .arg("-of")
+        .arg("default=noprint_wrappers=1:nokey=1")
+        .arg(path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|error| format!("failed to run ffprobe: {error}"))?;
+
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if detail.is_empty() {
+            format!("ffprobe exited with {}", output.status)
+        } else {
+            detail
+        });
+    }
+
+    let sample_rate = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse::<u32>()
+        .map_err(|error| format!("failed to parse ffprobe sample rate: {error}"))?;
+    if sample_rate == 0 {
+        return Err("ffprobe reported a zero sample rate".to_string());
+    }
+
+    Ok(sample_rate)
 }
 
 fn fold_to_mono<'a>(
