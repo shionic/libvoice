@@ -1,305 +1,437 @@
 # libvoice
 
-`libvoice` is a Rust crate for frame-based voice analysis. It accepts mono PCM samples as `&[f32]`, processes them with overlapping analysis windows, keeps only frames that pass a voiced-frame gate, and returns:
+`libvoice` is a Rust library for frame-based voice analysis. It accepts mono `f32` PCM samples, filters out frames that do not look voiced, and reports pitch, spectral statistics, formants, frame-level results, chunk summaries, overall summaries, and optional FFT magnitudes.
 
-- frame-level measurements for voiced frames
-- chunk-level summaries
-- an overall summary for the full processed stream
+## 1) Public API, List of Functions, Default Settings
 
-The implementation is centered in [src/analyzer.rs](/home/shione/projects/rust/voicelib/libvoice/src/analyzer.rs), with signal processing in [src/signal.rs](/home/shione/projects/rust/voicelib/libvoice/src/signal.rs), spectral analysis in [src/spectral.rs](/home/shione/projects/rust/voicelib/libvoice/src/spectral.rs), formant extraction in [src/formant.rs](/home/shione/projects/rust/voicelib/libvoice/src/formant.rs), and statistical aggregation in [src/summary.rs](/home/shione/projects/rust/voicelib/libvoice/src/summary.rs).
+### Public Types
 
-## Public API
+- `VoiceAnalyzer`: streaming analyzer state.
+- `AnalysisOutputOptions`: optional extra outputs. Currently only `fft_spectrum`.
+- `AnalyzerConfig`: runtime analysis settings.
+- `AnalysisReport`: full result returned by one-shot helpers.
+- `FrameAnalysis`: one voiced frame plus cumulative stats up to that frame.
+- `ChunkAnalysis`: summary for one input chunk.
+- `OverallAnalysis`: summary across all voiced frames seen so far.
+- `SummaryStats`: `count`, `mean`, `std`, `median`, `min`, `max`, `p5`, `p95`.
+- `SpectralSummary`: rolloff, centroid, bandwidth, flatness, tilt, ZCR, RMS, loudness, HNR.
+- `FormantSummary`: optional `f1`..`f4`.
+- `FormantStats`: summary for one tracked formant slot.
+- `FftSpectrum`: optional FFT output for each processed frame.
+- `FftSpectrumFrame`: one FFT frame with time bounds, voiced flag, and magnitudes.
+- `JitterMetrics`: public data model only. Current implementation never populates it.
 
-The crate exports:
+### Public Functions and Methods
 
-- `VoiceAnalyzer`
-- `AnalyzerConfig`
-- `AnalysisReport`
-- `ChunkAnalysis`
-- `FrameAnalysis`
-- `OverallAnalysis`
-- `SummaryStats`
-- `SpectralSummary`
-- `FormantSummary`
-- `FormantStats`
-- `JitterMetrics`
+#### `AnalyzerConfig`
 
-See [src/lib.rs](/home/shione/projects/rust/voicelib/libvoice/src/lib.rs) and [src/model.rs](/home/shione/projects/rust/voicelib/libvoice/src/model.rs).
+- `AnalyzerConfig::new(sample_rate: u32) -> AnalyzerConfig`
+  Creates a config with sensible defaults for the given sample rate.
+- `AnalyzerConfig::default() -> AnalyzerConfig`
+  Equivalent to `AnalyzerConfig::new(16_000)`.
+- `frame_step_seconds(&self) -> f32`
+  Returns `hop_size / sample_rate`.
 
-## Processing model
+#### `VoiceAnalyzer`
 
-`VoiceAnalyzer` keeps a rolling pending buffer and analyzes every full frame of `frame_size` samples with step `hop_size` ([src/analyzer.rs:43](/home/shione/projects/rust/voicelib/libvoice/src/analyzer.rs:43)).
+- `VoiceAnalyzer::new(config: AnalyzerConfig) -> VoiceAnalyzer`
+  Creates a streaming analyzer with default output options.
+- `VoiceAnalyzer::new_with_output_options(config, output_options) -> VoiceAnalyzer`
+  Creates a streaming analyzer and optionally enables FFT export.
+- `config(&self) -> &AnalyzerConfig`
+  Returns the active config.
+- `process_chunk(&mut self, samples: &[f32]) -> ChunkAnalysis`
+  Feeds one chunk and returns a summary for voiced frames found in that chunk.
+- `process_chunk_with_frames(&mut self, samples: &[f32]) -> (ChunkAnalysis, Vec<FrameAnalysis>)`
+  Same as `process_chunk`, but also returns every voiced frame emitted from that chunk.
+- `finalize(&self) -> OverallAnalysis`
+  Returns the cumulative summary across all voiced frames processed so far.
+- `VoiceAnalyzer::analyze_buffer(config, samples) -> AnalysisReport`
+  One-shot whole-buffer analysis.
+- `VoiceAnalyzer::analyze_buffer_with_output_options(config, samples, output_options) -> AnalysisReport`
+  Whole-buffer analysis with optional FFT export.
+- `VoiceAnalyzer::analyze_buffer_in_chunks(config, samples, input_chunk_size) -> AnalysisReport`
+  Simulates streaming by feeding the buffer in fixed-size chunks.
+- `VoiceAnalyzer::analyze_buffer_in_chunks_with_output_options(config, samples, input_chunk_size, output_options) -> AnalysisReport`
+  Same as above, with optional FFT export.
 
-For each frame it computes:
+### Default Settings
 
-- pitch and pitch clarity
-- spectral rolloff, centroid, bandwidth, flatness, tilt
-- zero-crossing rate
-- RMS, loudness in dBFS, energy
-- harmonic-to-noise ratio estimate
-- LPC formants with simple temporal tracking
+`AnalyzerConfig::new(sample_rate)` sets:
 
-Only frames that satisfy the voiced-frame gate are retained in `frames`, `chunks[*]`, and `overall` ([src/analyzer.rs:139](/home/shione/projects/rust/voicelib/libvoice/src/analyzer.rs:139)). Silence, noise, and unvoiced frames are analyzed internally but dropped from the public summaries.
+| Field | Default |
+| --- | --- |
+| `sample_rate` | caller-provided |
+| `frame_size` | `2048` samples |
+| `hop_size` | `512` samples |
+| `min_pitch_hz` | `60.0` Hz |
+| `max_pitch_hz` | `500.0` Hz |
+| `pitch_clarity_threshold` | `0.60` |
+| `rolloff_ratio` | `0.85` |
+| `voiced_rms_threshold` | `0.015` |
+| `voiced_max_spectral_flatness` | `0.45` |
+| `voiced_max_zero_crossing_rate` | `0.25` |
+| `max_formants` | `4` |
+| `formant_max_frequency_hz` | `clamp(min(sample_rate / 2 - 50, 5500), 1500, 5500)` |
+| `formant_max_bandwidth_hz` | `700.0` Hz |
+| `formant_pre_emphasis_hz` | `50.0` Hz |
 
-Voiced-frame gate:
+`AnalysisOutputOptions::default()` sets:
 
+- `fft_spectrum: false`
+
+For the default `16_000` Hz config:
+
+- frame length = `2048 / 16000 = 128 ms`
+- frame step = `512 / 16000 = 32 ms`
+- FFT bin spacing = `16000 / 2048 = 7.8125 Hz`
+- default `formant_max_frequency_hz = 5500 Hz`
+
+## 2) Recommendations for Default Settings
+
+- Start with `AnalyzerConfig::new(16_000)` unless the recording is already stored at a different rate. The implementation is tested at `16 kHz` and also for formant stability at `48 kHz`.
+- Keep `frame_size = 2048` and `hop_size = 512` for speech. The code and tests assume this scale, and the optional FFT output is also validated with these values.
+- Keep the default pitch range `60..500 Hz` for general voice analysis. It covers the test cases (`110`, `140`, `180`, `205`, `220`, `240`, `320 Hz`) and most adult speech and singing fundamentals.
+- Raise `max_pitch_hz` only if you expect very high singing or child speech. Lower it if octave errors above the expected range matter more than recall.
+- Do not lower `pitch_clarity_threshold` below `0.60` unless you want more borderline voiced frames. This threshold is used twice: pitch acceptance in the YIN-like detector and final voiced-frame gating.
+- Keep `voiced_rms_threshold = 0.015`, `voiced_max_spectral_flatness = 0.45`, and `voiced_max_zero_crossing_rate = 0.25` together. In the current implementation, they are the main protection against silence and broadband noise entering the voiced summaries.
+- Leave `max_formants = 4` unless you have a strong reason to expose more LPC poles. The public summary only has slots `f1` through `f4`.
+- Keep `formant_max_bandwidth_hz = 700` for speech-like vowels. Narrow resonances survive; wide, unstable poles are rejected.
+- Enable `AnalysisOutputOptions { fft_spectrum: true }` only when you actually need per-frame FFT magnitudes. It increases result size substantially.
+- Treat `jitter` as unavailable for now. The field exists in the report schema, but the current library always returns `None`.
+
+## 3) List of All Features
+
+### Streaming and One-Shot Analysis
+
+What it is:
+Analyze either a full sample buffer at once or incrementally as chunks arrive.
+
+Algorithm:
+The analyzer stores pending samples, emits a frame whenever `pending_start + frame_size <= pending.len()`, advances by `hop_size`, keeps overlap in memory, and compacts the pending buffer after processing.
+
+Boundary values:
+- `input_chunk_size` is clamped with `.max(1)` in the chunked helper.
+- Frames are emitted only when at least `frame_size` samples are available.
+- Incomplete trailing audio is ignored.
+
+Known typical values:
+- Tests use irregular chunks such as `13`, `97`, `257`, `317`, `509`, `701`, `1024`.
+- A 1-second signal at `16 kHz` with default settings produces voiced frames spaced every `32 ms`.
+
+### Voiced-Frame Filtering
+
+What it is:
+Only frames that look voiced contribute to `frames`, `chunks`, and `overall` summaries.
+
+Algorithm:
+A frame is accepted only if all of these hold:
 - `pitch_hz.is_some()`
 - `pitch_clarity >= pitch_clarity_threshold`
 - `rms >= voiced_rms_threshold`
 - `spectral_flatness <= voiced_max_spectral_flatness`
 - `zcr <= voiced_max_zero_crossing_rate`
 
-This means `frame_count` is the count of voiced frames, not the count of all windows touched by the analyzer.
+Boundary values:
+- Defaults are `clarity >= 0.60`, `rms >= 0.015`, `flatness <= 0.45`, `zcr <= 0.25`.
+- Silence and broadband noise are expected to produce zero voiced frames.
 
-## AnalyzerConfig
+Known typical values:
+- In tests, silence yields `frame_count = 0`.
+- White-noise-like input at amplitude `0.4` is rejected as non-voice.
+- A stable sine at amplitude `0.5` passes cleanly.
 
-Defined in [src/config.rs](/home/shione/projects/rust/voicelib/libvoice/src/config.rs).
+### Pitch Detection
 
-### Core timing
+What it is:
+Per-frame fundamental-frequency estimation plus a clarity score.
 
-- `sample_rate: u32`
-  Input sampling rate in Hz. It also sets FFT bin spacing and formant search limits.
-- `frame_size: usize`
-  Analysis window length in samples. Default: `2048`.
-- `hop_size: usize`
-  Step between adjacent frames in samples. Default: `512`.
+Algorithm:
+The implementation is YIN-like:
+1. Downsample toward `16 kHz`.
+2. Remove DC.
+3. Compute the difference function over allowed lags.
+4. Convert it to CMNDF.
+5. Pick the first local minimum below the derived threshold, or the global minimum if needed.
+6. Refine the lag parabolically.
+7. Reject low-clarity and near-boundary weak candidates.
 
-Effective timing with defaults at `16 kHz`:
+Boundary values:
+- Search range is `[min_pitch_hz, max_pitch_hz]`, default `60..500 Hz`.
+- Internal YIN threshold is derived from clarity and clamped to `0.05..0.40`.
+- Very short reduced frames (`< 3` samples, or not enough lags) return no pitch.
 
-- frame duration: `2048 / 16000 = 128 ms`
-- frame step: `512 / 16000 = 32 ms`
+Known typical values:
+- Tested stable tones: `110`, `180`, `220`, `320 Hz`.
+- Streaming tests also use `140`, `205`, `240 Hz`.
+- For a stable sine, mean pitch is expected within about `12 Hz`, with low standard deviation.
 
-### Pitch parameters
+### Pitch Post-Processing for Summaries
 
-- `min_pitch_hz: f32`
-  Lowest accepted F0 after lag refinement.
-- `max_pitch_hz: f32`
-  Highest accepted F0 after lag refinement.
-- `pitch_clarity_threshold: f32`
-  Minimum accepted clarity. The code converts this to a YIN-style CMNDF threshold of `clamp(1.0 - clarity_threshold, 0.05, 0.40)` ([src/signal.rs:83](/home/shione/projects/rust/voicelib/libvoice/src/signal.rs:83)).
+What it is:
+The summary pitch statistics are slightly cleaned before computing `mean`, `median`, percentiles, and standard deviation.
 
-### Spectral parameters
+Algorithm:
+The raw voiced pitch contour is:
+1. Repaired for isolated outliers if both neighboring jumps exceed `18%` but the bridge jump is below `8%`.
+2. Median-smoothed with radius `2`.
 
-- `rolloff_ratio: f32`
-  Fraction used for spectral rolloff. The implementation accumulates FFT power until this fraction is reached ([src/spectral.rs:107](/home/shione/projects/rust/voicelib/libvoice/src/spectral.rs:107)).
+Boundary values:
+- No smoothing is applied when fewer than `3` pitch values are available.
 
-### Voicing gate parameters
+Known typical values:
+- This is intended to stabilize summary statistics for otherwise steady voiced segments.
 
-- `voiced_rms_threshold: f32`
-  Minimum RMS required for a frame to be considered voiced.
-- `voiced_max_spectral_flatness: f32`
-  Maximum spectral flatness allowed for a voiced frame.
-- `voiced_max_zero_crossing_rate: f32`
-  Maximum zero-crossing rate allowed for a voiced frame.
+### Spectral Rolloff
 
-### Formant parameters
+What it is:
+Frequency below which a chosen fraction of spectral power has accumulated.
 
-- `max_formants: usize`
-  Maximum number of tracked formant slots. Also controls LPC order through `lpc_order() = max(max_formants * 2 + 2, 8)` ([src/config.rs:47](/home/shione/projects/rust/voicelib/libvoice/src/config.rs:47)).
-- `formant_max_frequency_hz: f32`
-  Highest accepted formant frequency. Default is derived from Nyquist, capped at `5500 Hz`, floored at `1500 Hz`.
-- `formant_max_bandwidth_hz: f32`
-  Maximum accepted formant bandwidth.
-- `formant_pre_emphasis_hz: f32`
-  Corner-like control used to derive the first-order pre-emphasis coefficient `exp(-2*pi*f/fs)` before LPC analysis ([src/formant.rs:57](/home/shione/projects/rust/voicelib/libvoice/src/formant.rs:57)).
+Algorithm:
+After FFT magnitude calculation, cumulative power is tracked until it reaches `power_sum * rolloff_ratio`.
 
-## Algorithms
+Boundary values:
+- Default `rolloff_ratio = 0.85`.
+- If no earlier bin reaches the threshold, rolloff falls back to the last FFT bin.
 
-### Windowing and frame flow
+Known typical values:
+- For a clean `220 Hz` sine, tests expect mean rolloff below `500 Hz`.
 
-- FFT analysis uses a Hann window from [src/signal.rs:132](/home/shione/projects/rust/voicelib/libvoice/src/signal.rs:132).
-- LPC/formant analysis applies its own Hamming window after pre-emphasis ([src/formant.rs:124](/home/shione/projects/rust/voicelib/libvoice/src/formant.rs:124)).
-- Partial trailing audio shorter than one full frame is kept in `pending` during streaming and never flushed into a padded last frame.
+### Spectral Centroid
 
-### Pitch
+What it is:
+Magnitude-weighted center of mass of the spectrum.
 
-Pitch estimation lives in [src/signal.rs:22](/home/shione/projects/rust/voicelib/libvoice/src/signal.rs:22).
+Algorithm:
+`sum(hz * magnitude) / sum(magnitude)`.
 
-Implemented steps:
+Boundary values:
+- Returns `0.0` when total magnitude is zero.
 
-1. Downsample toward `16 kHz` with simple block averaging (`fill_downsampled`).
-2. Remove DC by subtracting the frame mean.
-3. Compute the YIN difference function over the lag range derived from `min_pitch_hz` and `max_pitch_hz`.
-4. Convert it to cumulative mean normalized difference (CMNDF).
-5. Pick the first local minimum below the derived threshold, otherwise the global CMNDF minimum in range.
-6. Refine the lag by parabolic interpolation.
-7. Reject boundary hits with weak clarity.
-8. Convert lag to `Hz`.
-9. Compute a normalized autocorrelation-based periodicity score for HNR estimation.
+Known typical values:
+- For a clean `220 Hz` sine, tests expect centroid roughly between `180` and `350 Hz`.
 
-Returned pitch values are only exposed for voiced frames.
+### Spectral Bandwidth
 
-### Spectral features
+What it is:
+Spread of the magnitude spectrum around the centroid.
 
-Implemented in [src/spectral.rs](/home/shione/projects/rust/voicelib/libvoice/src/spectral.rs).
+Algorithm:
+Square root of the magnitude-weighted second central moment around the centroid.
 
-- `energy`: mean square on the unwindowed frame
-- `rms`: `sqrt(energy)`
-- `zcr`: sign-change rate on the unwindowed frame
-- `spectral_centroid_hz`: magnitude-weighted centroid
-- `spectral_bandwidth_hz`: magnitude-weighted standard deviation around the centroid
-- `spectral_rolloff_hz`: first bin where cumulative power reaches `rolloff_ratio`
-- `spectral_flatness`: geometric mean power divided by arithmetic mean power
-- `spectral_tilt_db_per_octave`: power-weighted least-squares slope of `20*log10(magnitude)` versus `log2(frequency)` inside a speech band, after excluding bins more than `40 dB` below the in-band peak
-- `loudness_dbfs`: `20*log10(rms)`
-- `hnr_db`: `10*log10(periodicity / (1 - periodicity))`
+Boundary values:
+- Returns `0.0` when total magnitude is zero.
 
-### Formants
+Known typical values:
+- For a clean `220 Hz` sine, tests expect bandwidth below `250 Hz`.
 
-Implemented in [src/formant.rs](/home/shione/projects/rust/voicelib/libvoice/src/formant.rs).
+### Spectral Flatness
 
-Pipeline:
+What it is:
+A tonal-vs-noisy measure derived from the FFT power spectrum.
 
+Algorithm:
+Geometric mean of power divided by arithmetic mean of power.
+
+Boundary values:
+- Approximately `0` for peaky spectra.
+- Approaches `1` for flat/noise-like spectra.
+- Used directly in voiced gating with default maximum `0.45`.
+
+Known typical values:
+- For a clean sine, tests expect flatness below `0.1`.
+- Broadband noise is expected to exceed the voiced limit often enough to be rejected.
+
+### Spectral Tilt
+
+What it is:
+Slope of spectral level versus log-frequency, reported in `dB/octave`.
+
+Algorithm:
+Weighted linear regression over FFT bins:
+1. Use only bins between `80 Hz` and `min(5000 Hz, Nyquist)`.
+2. Ignore bins more than `40 dB` below the in-band peak power.
+3. Regress `20*log10(magnitude)` on `log2(frequency)` with power weights.
+
+Boundary values:
+- Minimum analysis frequency: `80 Hz`.
+- Maximum analysis frequency: `5000 Hz` or Nyquist, whichever is lower.
+- Requires at least `3` selected bins; otherwise returns `0.0`.
+
+Known typical values:
+- A flat synthetic spectrum gives near `0 dB/octave`.
+- A decaying synthetic spectrum gives a negative tilt.
+
+### Zero-Crossing Rate (ZCR)
+
+What it is:
+Fraction of adjacent sample pairs that cross zero.
+
+Algorithm:
+Count sign changes and divide by `frame.len() - 1`.
+
+Boundary values:
+- Returns `0.0` for frames shorter than `2` samples.
+- Used in voiced gating with default maximum `0.25`.
+
+Known typical values:
+- A `220 Hz` sine at `16 kHz` is roughly `0.0275`.
+- Noise tends to be much higher.
+
+### Energy, RMS, and Loudness
+
+What it is:
+Basic level measurements.
+
+Algorithm:
+- `energy`: mean square of the raw frame.
+- `rms`: square root of energy.
+- `loudness_dbfs`: `20 * log10(max(rms, 1e-12))`.
+
+Boundary values:
+- Silent frames have zero energy before voiced gating removes them.
+- `loudness_dbfs` is floored numerically at `1e-12` RMS to avoid `-inf`.
+
+Known typical values:
+- A sine with amplitude `0.5` has energy near `0.125` and RMS near `0.354`.
+- Mixed-signal tests expect voiced energy mean above `0.05`.
+
+### Harmonics-to-Noise Ratio (HNR)
+
+What it is:
+A harmonicity estimate derived from pitch periodicity.
+
+Algorithm:
+Normalized autocorrelation at the chosen lag is converted to:
+`10 * log10(periodicity / (1 - periodicity))`
+
+Boundary values:
+- Periodicity `<= 0` returns `0 dB`.
+- Periodicity is clamped to `[1e-6, 0.999]` before conversion.
+
+Known typical values:
+- Strongly periodic voiced frames produce positive HNR.
+- Unvoiced or rejected frames do not enter summaries.
+
+### Formant Estimation
+
+What it is:
+Per-frame LPC-based estimation of vocal-tract resonances.
+
+Algorithm:
 1. Downsample toward `11 kHz`.
 2. Remove DC.
 3. Apply first-order pre-emphasis.
-4. Apply Hamming window.
+4. Apply a Hamming window.
 5. Compute autocorrelation.
 6. Solve LPC coefficients with Levinson-Durbin.
-7. Find LPC polynomial roots with a Durand-Kerner style iterative root solver.
-8. Keep only upper-half-plane roots inside the unit circle.
-9. Convert root angle to formant frequency and root radius to bandwidth.
-10. Reject candidates outside the configured frequency and bandwidth limits.
-11. Sort by frequency, collapse nearby formants, and keep at most `max_formants`.
-12. Track formant slots between frames with bounded jump matching.
+7. Find LPC polynomial roots.
+8. Keep upper-half-plane roots inside the unit circle.
+9. Convert roots to frequency and bandwidth.
+10. Reject implausible poles and collapse near-duplicates.
 
-Tracking is slot-based, not speaker- or phoneme-aware. Missing slots are returned as `0.0` frequency and `0.0` bandwidth in frame output and ignored in summaries.
+Boundary values:
+- Minimum kept formant frequency: `90 Hz`.
+- Maximum frequency: `min(formant_max_frequency_hz, Nyquist - 50 Hz)`.
+- Maximum bandwidth: default `700 Hz`.
+- `lpc_order = max(max_formants * 2 + 2, 8)`.
+- Nearby candidates are merged when spacing is below `max(60 Hz, 20% of the narrower bandwidth)`.
 
-### Statistical summaries
+Known typical values:
+- Vowel-like tests target `F1 ≈ 730 Hz`, `F2 ≈ 1090 Hz`.
+- The implementation is tested to keep similar `F1/F2` values at `16 kHz` and `48 kHz`.
 
-Implemented in [src/stats.rs](/home/shione/projects/rust/voicelib/libvoice/src/stats.rs) and [src/summary.rs](/home/shione/projects/rust/voicelib/libvoice/src/summary.rs).
+### Formant Tracking Across Frames
 
-`SummaryStats` contains:
+What it is:
+Stabilizes `F1`..`F4` slot assignment over time.
 
-- `count`
-- `mean`
-- `std`
-- `median`
-- `min`
-- `max`
-- `p5`
-- `p95`
+Algorithm:
+Each slot first tries to match the closest candidate near the previous slot value. Remaining candidates are inserted into empty slots in ascending-frequency order. Unmatched tracked slots can survive for a limited number of missed frames.
 
-Pitch summaries use extra contour cleanup before aggregation ([src/summary.rs:112](/home/shione/projects/rust/voicelib/libvoice/src/summary.rs:112)):
+Boundary values:
+- Maximum relative jump: `22%`.
+- Minimum absolute jump allowance: `180 Hz`.
+- A slot is dropped after `6` consecutive misses.
+- Output is capped at `max_formants`, default `4`.
 
-- collect voiced `pitch_hz` values
-- repair one-frame outliers if neighbors agree
-- apply median smoothing with radius `2`
-- summarize the smoothed contour
+Known typical values:
+- Stable vowel-like test material yields persistent `F1` and `F2` tracks.
 
-Spectral, energy, and formant summaries are direct summaries over retained voiced frames.
+### Frame-Level Output
 
-## Output structures
+What it is:
+Every accepted voiced frame can be returned with its own measurements and cumulative totals up to that frame.
 
-### AnalysisReport
+Algorithm:
+When a frame passes voiced gating, the library stores its raw per-frame values and recomputes cumulative overall summaries using all voiced frames seen so far.
 
-- `config`
-  The exact configuration used.
-- `frames`
-  Per-voiced-frame details with cumulative summary after each retained frame.
-- `chunks`
-  One summary per processed input chunk.
-- `overall`
-  Summary over all retained voiced frames.
+Boundary values:
+- Only voiced frames are emitted.
+- `frame_index` increases only for voiced frames, not for all FFT windows.
 
-### FrameAnalysis
+Known typical values:
+- Tests expect `frames.len() == overall.frame_count`.
+- The first frame has cumulative `frame_count = 1`.
+- The last frame’s cumulative summary matches `overall`.
 
-Defined in [src/model.rs:92](/home/shione/projects/rust/voicelib/libvoice/src/model.rs:92).
+### Chunk and Overall Statistical Summaries
 
-- `frame_index`
-  Sequential index of retained voiced frames only.
-- `start_sample`, `end_sample`
-  Sample range of the original analysis window.
-- `start_seconds`, `end_seconds`
-  Time range from those sample indices.
-- `pitch_hz`
-  Per-frame F0, or `None` when pitch failed before voice gating. In practice stored frames are voiced, so this is normally `Some`.
-- `pitch_clarity`
-  `1 - CMNDF(best_lag)`.
-- `spectral_rolloff_hz`, `spectral_centroid_hz`, `spectral_bandwidth_hz`, `spectral_flatness`, `spectral_tilt_db_per_octave`
-  Spectral descriptors from the FFT frame.
-- `zcr`, `rms`, `loudness_dbfs`, `hnr_db`, `energy`
-  Time-domain and derived measures.
-- `formants_hz`, `formant_bandwidths_hz`
-  Tracked formant slots for that frame.
-- `cumulative`
-  `OverallAnalysis` recalculated after this retained frame.
+What it is:
+Aggregated statistics for voiced frames within one chunk and across the full stream.
 
-### ChunkAnalysis and OverallAnalysis
+Algorithm:
+For each metric, finite values are collected, sorted, and summarized into `mean`, `std`, `median`, `min`, `max`, `p5`, `p95`.
 
-Both contain:
+Boundary values:
+- Empty frame sets produce `None` summaries.
+- `jitter` is always `None` in the current implementation.
 
-- `frame_count`
-  Count of retained voiced frames.
-- `pitch_hz`
-  Summary of smoothed voiced pitch contour.
-- `spectral`
-  Summary of spectral descriptors across retained voiced frames.
-- `formants`
-  Slot-wise formant summaries.
-- `energy`
-  Summary of frame energy across retained voiced frames.
-- `jitter`
-  Currently always `None`.
+Known typical values:
+- Silence and noise-only input produce `None` for pitch, spectral, formants, and energy.
+- Stable voiced input produces dense summaries with low pitch spread.
 
-`ChunkAnalysis` also has:
+### Optional FFT Spectrum Export
 
-- `chunk_index`
-- `input_samples`
+What it is:
+Raw FFT magnitude vectors for every processed analysis frame.
 
-`OverallAnalysis` also has:
+Algorithm:
+If `AnalysisOutputOptions.fft_spectrum` is enabled, the analyzer stores the current frame’s FFT magnitudes together with time bounds and the voiced/non-voiced decision.
 
-- `processed_samples`
+Boundary values:
+- Disabled by default.
+- Returns `None` if no FFT frames were captured.
+- `bin_hz = sample_rate / frame_size`.
 
-## Files
+Known typical values:
+- With the default config at `16 kHz`, `frame_size = 2048`, `hop_size = 512`, `bin_hz = 7.8125 Hz`.
+- Tests expect a `220 Hz` tone to peak near the corresponding FFT bin, within about `20 Hz`.
 
-- [Cargo.toml](/home/shione/projects/rust/voicelib/libvoice/Cargo.toml)
-  Crate manifest. Uses `realfft`, `rustfft`, and `serde`.
-- [src/lib.rs](/home/shione/projects/rust/voicelib/libvoice/src/lib.rs)
-  Module wiring, re-exports, and basic unit tests.
-- [src/analyzer.rs](/home/shione/projects/rust/voicelib/libvoice/src/analyzer.rs)
-  Streaming analyzer, chunk handling, voiced-frame gating, and report construction.
-- [src/config.rs](/home/shione/projects/rust/voicelib/libvoice/src/config.rs)
-  User-facing configuration and defaults.
-- [src/model.rs](/home/shione/projects/rust/voicelib/libvoice/src/model.rs)
-  Public report and summary structs.
-- [src/signal.rs](/home/shione/projects/rust/voicelib/libvoice/src/signal.rs)
-  Pitch analysis, loudness/HNR helpers, zero-crossing, and downsampling helpers.
-- [src/spectral.rs](/home/shione/projects/rust/voicelib/libvoice/src/spectral.rs)
-  FFT-based feature extraction and integration with pitch and formants.
-- [src/formant.rs](/home/shione/projects/rust/voicelib/libvoice/src/formant.rs)
-  LPC-based formant estimation and slot tracker.
-- [src/stats.rs](/home/shione/projects/rust/voicelib/libvoice/src/stats.rs)
-  Generic summary statistics.
-- [src/summary.rs](/home/shione/projects/rust/voicelib/libvoice/src/summary.rs)
-  Construction of chunk and overall summaries.
-- [tests/voice_analysis.rs](/home/shione/projects/rust/voicelib/libvoice/tests/voice_analysis.rs)
-  Integration tests for pitch, streaming consistency, spectral values, formants, and serialization.
+### Serialization
 
-## Issues found in the current implementation
+What it is:
+Configuration and result types derive `Serialize` and `Deserialize`.
 
-### 1. Jitter is modeled but never implemented
+Algorithm:
+Serde derives are attached directly to the public model types.
 
-`JitterMetrics` is a public type, and `ChunkAnalysis` / `OverallAnalysis` expose `jitter`, but the code always sets it to `None` ([src/model.rs:43](/home/shione/projects/rust/voicelib/libvoice/src/model.rs:43), [src/summary.rs:24](/home/shione/projects/rust/voicelib/libvoice/src/summary.rs:24), [src/summary.rs:45](/home/shione/projects/rust/voicelib/libvoice/src/summary.rs:45)). If users expect jitter measurements, the current implementation is incomplete.
+Boundary values:
+- Serialization preserves optional sections such as `spectral`, `formants`, and `fft_spectrum`.
 
-### 2. “Overall” and “chunk” metrics are voice-only, not whole-signal metrics
+Known typical values:
+- Tests verify JSON output contains `overall`, `frames`, `chunks`, `spectral`, `tilt_db_per_octave`, and `formants`.
 
-The analyzer discards every frame that fails the voiced-frame gate before building summaries ([src/analyzer.rs:59](/home/shione/projects/rust/voicelib/libvoice/src/analyzer.rs:59)). As a result:
+### Current Non-Feature: Jitter
 
-- silence does not contribute zero energy
-- noisy or unvoiced regions do not contribute spectral statistics
-- `frame_count` is not the number of analyzed windows
+What it is:
+The public schema contains `JitterMetrics`, but analysis does not compute it yet.
 
-That behavior is consistent in code and tests, but it is easy to misread as full-buffer statistics.
+Algorithm:
+No algorithm is currently wired in; all summary constructors set `jitter: None`.
 
-### 3. Pitch summary smoothing ignores time gaps
+Boundary values:
+- Always `None`.
 
-Pitch summary code drops unvoiced gaps and then smooths only the remaining voiced values ([src/summary.rs:116](/home/shione/projects/rust/voicelib/libvoice/src/summary.rs:116)). If two voiced regions are separated by silence or noise, the median smoothing and outlier repair can treat those regions as adjacent in time. This affects summary pitch statistics, not per-frame pitch values.
-
-## Validation status
-
-The current automated tests pass with:
-
-```bash
-cargo test -p libvoice
-```
+Known typical values:
+- All current tests expect missing jitter on silence, and no test exercises populated jitter values.
