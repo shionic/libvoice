@@ -175,10 +175,7 @@ pub fn build_spectrum_feature_graphs(report: &AnalysisReport) -> Result<Vec<Grap
     if let Some(graph) = build_spectrum_graph(report)? {
         graphs.push(graph);
     }
-    if let Some(graph) = build_power_envelope_graph(spectrum, max_bin, max_hz)? {
-        graphs.push(graph);
-    }
-    if let Some(graph) = build_envelope_spectrogram_graph(spectrum, max_bin, max_hz)? {
+    if let Some(graph) = build_perceptual_harmonics_graph(&report.frames, max_hz)? {
         graphs.push(graph);
     }
 
@@ -228,7 +225,7 @@ fn build_harmonics_graph(frames: &[FrameAnalysis]) -> Result<Option<GraphImage>,
         .map(|frame| frame.harmonic_strengths.len())
         .max()
         .unwrap_or(0);
-    if max_harmonics == 0 {
+    if max_harmonics <= 1 {
         return Ok(None);
     }
 
@@ -238,6 +235,7 @@ fn build_harmonics_graph(frames: &[FrameAnalysis]) -> Result<Option<GraphImage>,
             frame
                 .harmonic_strengths
                 .iter()
+                .skip(1)
                 .filter_map(|value| *value)
                 .sum::<f32>()
         })
@@ -260,7 +258,7 @@ fn build_harmonics_graph(frames: &[FrameAnalysis]) -> Result<Option<GraphImage>,
             let mut drew_boundary_legend = false;
             for run in &runs {
                 let mut lower = vec![0.0_f32; run.len()];
-                for harmonic_index in 0..max_harmonics {
+                for harmonic_index in 1..max_harmonics {
                     let upper: Vec<f32> = run
                         .iter()
                         .enumerate()
@@ -326,11 +324,11 @@ fn build_harmonics_graph(frames: &[FrameAnalysis]) -> Result<Option<GraphImage>,
             chart
                 .draw_series(std::iter::once(PathElement::new(
                     vec![(0.0, 0.0), (0.0, 0.0)],
-                    harmonic_fill_color(0, max_harmonics).mix(0.26).filled(),
+                    harmonic_fill_color(1, max_harmonics).mix(0.26).filled(),
                 )))?
-                .label("Stacked harmonic bands")
+                .label("Stacked bands (H2+)")
                 .legend({
-                    let color = harmonic_fill_color(0, max_harmonics);
+                    let color = harmonic_fill_color(1, max_harmonics);
                     move |(x, y)| {
                         Rectangle::new(
                             [(x, y - 4), (x + 24, y + 4)],
@@ -343,7 +341,7 @@ fn build_harmonics_graph(frames: &[FrameAnalysis]) -> Result<Option<GraphImage>,
                     vec![(0.0, 0.0), (0.0, 0.0)],
                     BLACK.stroke_width(2),
                 )))?
-                .label("Total")
+                .label("Total (H2+)")
                 .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 24, y)], BLACK.stroke_width(2)));
             Ok(())
         },
@@ -420,6 +418,94 @@ fn hsv_to_rgb(hue_degrees: f32, saturation: f32, value: f32) -> RGBColor {
         ((g1 + m) * 255.0).round() as u8,
         ((b1 + m) * 255.0).round() as u8,
     )
+}
+
+fn perceptual_harmonic_total(frame: &FrameAnalysis, max_hz: f32) -> f32 {
+    frame
+        .harmonic_strengths
+        .iter()
+        .enumerate()
+        .skip(1)
+        .map(|(harmonic_index, _)| {
+            perceptual_display_band_height(perceptual_harmonic_contribution(
+                frame,
+                harmonic_index,
+                max_hz,
+            ))
+        })
+        .sum()
+}
+
+fn perceptual_harmonic_contribution(
+    frame: &FrameAnalysis,
+    harmonic_index: usize,
+    max_hz: f32,
+) -> f32 {
+    let Some(pitch_hz) = frame.pitch_hz else {
+        return 0.0;
+    };
+    let Some(strength) = frame
+        .harmonic_strengths
+        .get(harmonic_index)
+        .copied()
+        .flatten()
+    else {
+        return 0.0;
+    };
+
+    let harmonic_frequency_hz = (harmonic_index + 1) as f32 * pitch_hz;
+    if harmonic_frequency_hz <= 0.0 || harmonic_frequency_hz > max_hz {
+        return 0.0;
+    }
+
+    strength * perceptual_frequency_weight(harmonic_frequency_hz)
+}
+
+fn perceptual_display_range(values: &[f32]) -> std::ops::Range<f32> {
+    let mut transformed: Vec<f32> = values
+        .iter()
+        .copied()
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .collect();
+    if transformed.is_empty() {
+        return 0.0..12.0;
+    }
+
+    transformed.sort_by(|a, b| a.total_cmp(b));
+    let robust_peak = percentile_sorted(&transformed, 0.97);
+    let upper = (robust_peak * 1.08).max(12.0);
+    0.0..upper
+}
+
+fn perceptual_display_db(value: f32) -> f32 {
+    const PERCEPTUAL_DB_FLOOR: f32 = -48.0;
+    if value <= 1.0e-6 {
+        return PERCEPTUAL_DB_FLOOR;
+    }
+    (20.0 * value.log10()).max(PERCEPTUAL_DB_FLOOR)
+}
+
+fn perceptual_display_band_height(value: f32) -> f32 {
+    const PERCEPTUAL_DB_FLOOR: f32 = -48.0;
+    perceptual_display_db(value) - PERCEPTUAL_DB_FLOOR
+}
+
+fn perceptual_frequency_weight(frequency_hz: f32) -> f32 {
+    let frequency_sq = frequency_hz * frequency_hz;
+    if frequency_sq <= 0.0 {
+        return 0.0;
+    }
+
+    let numerator = 12_200.0_f32.powi(2) * frequency_sq * frequency_sq;
+    let denominator = (frequency_sq + 20.6_f32.powi(2))
+        * (frequency_sq + 12_200.0_f32.powi(2))
+        * ((frequency_sq + 107.7_f32.powi(2)) * (frequency_sq + 737.9_f32.powi(2))).sqrt();
+    if denominator <= 1.0e-12 {
+        return 0.0;
+    }
+
+    let a_weighting_db = 20.0 * (numerator / denominator).max(1.0e-12).log10() + 2.0;
+    10.0_f32.powf(a_weighting_db / 20.0)
 }
 
 fn center_band_polygon(
@@ -623,166 +709,112 @@ fn build_spectral_graph(frames: &[FrameAnalysis]) -> Result<Option<GraphImage>, 
     .map(Some)
 }
 
-fn build_power_envelope_graph(
-    spectrum: &libvoice::FftSpectrum,
-    max_bin: usize,
+fn build_perceptual_harmonics_graph(
+    frames: &[FrameAnalysis],
     max_hz: f32,
 ) -> Result<Option<GraphImage>, String> {
-    let averaged = average_power_spectrum(spectrum, max_bin);
-    if averaged.len() < 8 {
+    if frames.is_empty() {
         return Ok(None);
     }
 
-    let envelope = spectral_envelope(&averaged, 10);
-    let envelope_db = envelope_to_db(&envelope);
-    let raw_db = envelope_to_db(&averaged);
-    let y_range = padded_range(&envelope_db, 0.08, 6.0);
-
-    let mut buffer = vec![255u8; (WIDTH * HEIGHT * 3) as usize];
-    let root = BitMapBackend::with_buffer(&mut buffer, (WIDTH, HEIGHT)).into_drawing_area();
-    root.fill(&WHITE).map_err(draw_err)?;
-
-    let mut chart = ChartBuilder::on(&root)
-        .margin(24)
-        .caption("Spectrum envelope", ("sans-serif", 34))
-        .x_label_area_size(56)
-        .y_label_area_size(84)
-        .build_cartesian_2d(0.0_f32..max_hz, y_range)
-        .map_err(draw_err)?;
-
-    chart
-        .configure_mesh()
-        .x_desc("Frequency (Hz)")
-        .y_desc("Power (dB)")
-        .light_line_style(RGBColor(220, 220, 220))
-        .draw()
-        .map_err(draw_err)?;
-
-    chart
-        .draw_series(LineSeries::new(
-            raw_db
-                .iter()
-                .enumerate()
-                .map(|(bin, value)| (bin as f32 * spectrum.bin_hz, *value)),
-            RGBColor(160, 185, 220),
-        ))
-        .map_err(draw_err)?
-        .label("Average power")
-        .legend(|(x, y)| {
-            PathElement::new(vec![(x, y), (x + 24, y)], RGBColor(160, 185, 220))
-        });
-
-    chart
-        .draw_series(LineSeries::new(
-            envelope_db
-                .iter()
-                .enumerate()
-                .map(|(bin, value)| (bin as f32 * spectrum.bin_hz, *value)),
-            RED.stroke_width(4),
-        ))
-        .map_err(draw_err)?
-        .label("Peak envelope")
-        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 24, y)], RED.stroke_width(4)));
-
-    chart
-        .configure_series_labels()
-        .background_style(WHITE.mix(0.9))
-        .border_style(BLACK)
-        .draw()
-        .map_err(draw_err)?;
-
-    drop(chart);
-    root.present().map_err(draw_err)?;
-    drop(root);
-
-    Ok(Some(GraphImage {
-        file_name: "spectrum_envelope.png".to_string(),
-        title: "Spectrum envelope".to_string(),
-        png_bytes: encode_png(buffer, WIDTH, HEIGHT)?,
-    }))
-}
-
-fn build_envelope_spectrogram_graph(
-    spectrum: &libvoice::FftSpectrum,
-    max_bin: usize,
-    max_hz: f32,
-) -> Result<Option<GraphImage>, String> {
-    let x_range = spectrum.frames[0].start_seconds
-        ..spectrum.frames.last().map(|frame| frame.end_seconds).unwrap_or(0.01);
-    let y_range = 0.0_f32..max_hz;
-
-    let mut peak_db = f32::NEG_INFINITY;
-    let mut smoothed_frames = Vec::with_capacity(spectrum.frames.len());
-    for frame in &spectrum.frames {
-        let powers = frame
-            .magnitudes
-            .iter()
-            .take(max_bin + 1)
-            .map(|magnitude| magnitude * magnitude)
-            .collect::<Vec<_>>();
-        let smoothed = spectral_envelope(&powers, 10);
-        for value in smoothed.iter().skip(1) {
-            peak_db = peak_db.max(power_to_db(*value));
-        }
-        smoothed_frames.push((frame.start_seconds, frame.end_seconds, frame.is_voiced, smoothed));
-    }
-
-    if !peak_db.is_finite() {
+    let max_harmonics = frames
+        .iter()
+        .map(|frame| frame.harmonic_strengths.len())
+        .max()
+        .unwrap_or(0);
+    if max_harmonics <= 1 {
         return Ok(None);
     }
 
-    let mut buffer = vec![255u8; (WIDTH * HEIGHT * 3) as usize];
-    let root = BitMapBackend::with_buffer(&mut buffer, (WIDTH, HEIGHT)).into_drawing_area();
-    root.fill(&WHITE).map_err(draw_err)?;
+    let perceptual_totals: Vec<f32> = frames
+        .iter()
+        .map(|frame| perceptual_harmonic_total(frame, max_hz))
+        .collect();
+    if perceptual_totals.iter().all(|value| *value <= 0.0) {
+        return Ok(None);
+    }
 
-    let mut chart = ChartBuilder::on(&root)
-        .margin(24)
-        .caption("Envelope spectrogram", ("sans-serif", 34))
-        .x_label_area_size(56)
-        .y_label_area_size(72)
-        .build_cartesian_2d(x_range, y_range)
-        .map_err(draw_err)?;
+    let x_range = time_range(frames);
+    let y_range = perceptual_display_range(&perceptual_totals);
+    let runs = voiced_runs(frames);
 
-    chart
-        .configure_mesh()
-        .x_desc("Time (s)")
-        .y_desc("Frequency (Hz)")
-        .light_line_style(RGBColor(220, 220, 220))
-        .draw()
-        .map_err(draw_err)?;
+    render_graph(
+        "Perceptual harmonic balance",
+        "Stacked perceptual band level (A-weighted dB)",
+        x_range,
+        y_range.clone(),
+        |chart: &mut Chart2d<'_, '_>| {
+            for run in &runs {
+                let mut lower = vec![0.0_f32; run.len()];
+                for harmonic_index in 1..max_harmonics {
+                    let upper: Vec<f32> = run
+                        .iter()
+                        .enumerate()
+                        .map(|(frame_index, frame)| {
+                            lower[frame_index]
+                                + perceptual_display_band_height(
+                                    perceptual_harmonic_contribution(
+                                        frame,
+                                        harmonic_index,
+                                        max_hz,
+                                    ),
+                                )
+                        })
+                        .collect();
 
-    for (start, end, is_voiced, smoothed) in smoothed_frames {
-        for bin in 1..smoothed.len() {
-            let lower_hz = (bin - 1) as f32 * spectrum.bin_hz;
-            let upper_hz = bin as f32 * spectrum.bin_hz;
-            let db = power_to_db(smoothed[bin]);
-            let normalized = ((db - peak_db + 80.0) / 80.0).clamp(0.0, 1.0);
-            let color = spectrogram_color(normalized, is_voiced);
+                    if upper
+                        .iter()
+                        .zip(lower.iter())
+                        .all(|(upper, lower)| (upper - lower).abs() <= 1.0e-6)
+                    {
+                        continue;
+                    }
+
+                    let fill = harmonic_fill_color(harmonic_index, max_harmonics);
+                    chart.draw_series(std::iter::once(Polygon::new(
+                        center_band_polygon(run, &lower, &upper),
+                        fill.mix(0.22).filled(),
+                    )))?;
+                    chart.draw_series(std::iter::once(PathElement::new(
+                        center_series_points(run, &upper),
+                        BLACK.mix(0.12).stroke_width(1),
+                    )))?;
+
+                    lower = upper;
+                }
+
+                chart.draw_series(std::iter::once(PathElement::new(
+                    center_series_points(run, &lower),
+                    BLACK.stroke_width(2),
+                )))?;
+            }
+
             chart
-                .draw_series(std::iter::once(Rectangle::new(
-                    [(start, lower_hz), (end, upper_hz)],
-                    color.filled(),
-                )))
-                .map_err(draw_err)?;
-        }
-    }
-
-    chart
-        .configure_series_labels()
-        .background_style(BLACK.mix(0.55))
-        .border_style(WHITE)
-        .draw()
-        .map_err(draw_err)?;
-
-    drop(chart);
-    root.present().map_err(draw_err)?;
-    drop(root);
-
-    Ok(Some(GraphImage {
-        file_name: "envelope_spectrogram.png".to_string(),
-        title: "Envelope spectrogram".to_string(),
-        png_bytes: encode_png(buffer, WIDTH, HEIGHT)?,
-    }))
+                .draw_series(std::iter::once(PathElement::new(
+                    vec![(0.0, 0.0), (0.0, 0.0)],
+                    harmonic_fill_color(1, max_harmonics).mix(0.22).filled(),
+                )))?
+                .label("Perceptual bands (H2+)")
+                .legend({
+                    let color = harmonic_fill_color(1, max_harmonics);
+                    move |(x, y)| {
+                        Rectangle::new(
+                            [(x, y - 4), (x + 24, y + 4)],
+                            color.mix(0.22).filled(),
+                        )
+                    }
+                });
+            chart
+                .draw_series(std::iter::once(PathElement::new(
+                    vec![(0.0, 0.0), (0.0, 0.0)],
+                    BLACK.stroke_width(2),
+                )))?
+                .label("Perceptual total (H2+)")
+                .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 24, y)], BLACK.stroke_width(2)));
+            Ok(())
+        },
+    )
+    .map(Some)
 }
 
 fn render_graph<F>(
@@ -967,71 +999,6 @@ fn encode_png(buffer: Vec<u8>, width: u32, height: u32) -> Result<Vec<u8>, Strin
         .write_image(&buffer, width, height, ColorType::Rgb8.into())
         .map_err(|error| format!("failed to encode graph png: {error}"))?;
     Ok(png_bytes)
-}
-
-fn average_power_spectrum(spectrum: &libvoice::FftSpectrum, max_bin: usize) -> Vec<f32> {
-    let mut sum = vec![0.0; max_bin + 1];
-    let mut count = 0usize;
-
-    for frame in &spectrum.frames {
-        if !frame.is_voiced {
-            continue;
-        }
-        for (bin, magnitude) in frame.magnitudes.iter().take(max_bin + 1).enumerate() {
-            sum[bin] += magnitude * magnitude;
-        }
-        count += 1;
-    }
-
-    if count == 0 {
-        for frame in &spectrum.frames {
-            for (bin, magnitude) in frame.magnitudes.iter().take(max_bin + 1).enumerate() {
-                sum[bin] += magnitude * magnitude;
-            }
-        }
-        count = spectrum.frames.len();
-    }
-
-    if count == 0 {
-        return Vec::new();
-    }
-
-    sum.into_iter().map(|value| value / count as f32).collect()
-}
-
-fn spectral_envelope(power: &[f32], window_radius: usize) -> Vec<f32> {
-    if power.is_empty() {
-        return Vec::new();
-    }
-
-    let mut peaks = vec![0.0; power.len()];
-    for index in 0..power.len() {
-        let start = index.saturating_sub(window_radius);
-        let end = (index + window_radius + 1).min(power.len());
-        let mut peak: f32 = 0.0;
-        for value in &power[start..end] {
-            peak = peak.max(*value);
-        }
-        peaks[index] = peak;
-    }
-
-    let mut smoothed = vec![0.0; power.len()];
-    for index in 0..power.len() {
-        let start = index.saturating_sub(window_radius);
-        let end = (index + window_radius + 1).min(power.len());
-        let slice = &peaks[start..end];
-        let sum: f32 = slice.iter().sum();
-        smoothed[index] = sum / slice.len() as f32;
-    }
-    smoothed
-}
-
-fn envelope_to_db(values: &[f32]) -> Vec<f32> {
-    values.iter().map(|value| power_to_db(*value)).collect()
-}
-
-fn power_to_db(value: f32) -> f32 {
-    10.0 * value.max(1.0e-24).log10()
 }
 
 fn slugify(title: &str) -> String {
