@@ -31,7 +31,7 @@ impl AnalyzerConfig {
             voiced_max_spectral_flatness: 0.45,
             voiced_max_zero_crossing_rate: 0.25,
             max_harmonic_frequency_hz: 5_000.0,
-            harmonic_min_strength_ratio: 0.02,
+            harmonic_min_strength_ratio: 0.005,
         }
     }
 
