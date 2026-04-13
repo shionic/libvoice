@@ -26,7 +26,7 @@ pub fn generate_graphs(report: &AnalysisReport) -> Result<Vec<GraphImage>, Strin
     if let Some(graph) = build_pitch_graph(frames)? {
         graphs.push(graph);
     }
-    if let Some(graph) = build_harmonics_graph(frames)? {
+    if let Some(graph) = build_harmonics_graph(report)? {
         graphs.push(graph);
     }
     if let Some(graph) = build_hnr_loudness_graph(frames)? {
@@ -175,7 +175,7 @@ pub fn build_spectrum_feature_graphs(report: &AnalysisReport) -> Result<Vec<Grap
     if let Some(graph) = build_spectrum_graph(report)? {
         graphs.push(graph);
     }
-    if let Some(graph) = build_perceptual_harmonics_graph(&report.frames, max_hz)? {
+    if let Some(graph) = build_perceptual_harmonics_graph(report, max_hz)? {
         graphs.push(graph);
     }
 
@@ -219,7 +219,8 @@ fn build_pitch_graph(frames: &[FrameAnalysis]) -> Result<Option<GraphImage>, Str
     .map(Some)
 }
 
-fn build_harmonics_graph(frames: &[FrameAnalysis]) -> Result<Option<GraphImage>, String> {
+fn build_harmonics_graph(report: &AnalysisReport) -> Result<Option<GraphImage>, String> {
+    let frames = &report.frames;
     let max_harmonics = frames
         .iter()
         .map(|frame| frame.harmonic_strengths.len())
@@ -248,6 +249,7 @@ fn build_harmonics_graph(frames: &[FrameAnalysis]) -> Result<Option<GraphImage>,
     let display_ceiling = harmonic_display_ceiling(&total_strengths);
     let y_range = 0.0_f32..display_ceiling;
     let runs = voiced_runs(frames);
+    let legend_harmonics = strongest_harmonic_legend_entries(report, false, 5_000.0);
 
     render_graph(
         "Harmonic stack",
@@ -343,6 +345,18 @@ fn build_harmonics_graph(frames: &[FrameAnalysis]) -> Result<Option<GraphImage>,
                 )))?
                 .label("Total (H2+)")
                 .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 24, y)], BLACK.stroke_width(2)));
+            for entry in &legend_harmonics {
+                chart
+                    .draw_series(std::iter::once(PathElement::new(
+                        vec![(0.0, 0.0), (0.0, 0.0)],
+                        entry.color.stroke_width(3),
+                    )))?
+                    .label(entry.label.clone())
+                    .legend({
+                        let color = entry.color;
+                        move |(x, y)| PathElement::new(vec![(x, y), (x + 24, y)], color.stroke_width(3))
+                    });
+            }
             Ok(())
         },
     )
@@ -488,6 +502,92 @@ fn perceptual_display_db(value: f32) -> f32 {
 fn perceptual_display_band_height(value: f32) -> f32 {
     const PERCEPTUAL_DB_FLOOR: f32 = -48.0;
     perceptual_display_db(value) - PERCEPTUAL_DB_FLOOR
+}
+
+#[derive(Clone, Debug)]
+struct HarmonicLegendEntry {
+    label: String,
+    color: RGBColor,
+}
+
+fn strongest_harmonic_legend_entries(
+    report: &AnalysisReport,
+    perceptual: bool,
+    max_hz: f32,
+) -> Vec<HarmonicLegendEntry> {
+    let frames = &report.frames;
+    if frames.is_empty() {
+        return Vec::new();
+    }
+
+    let max_harmonics = frames
+        .iter()
+        .map(|frame| frame.harmonic_strengths.len())
+        .max()
+        .unwrap_or(0);
+    if max_harmonics <= 1 {
+        return Vec::new();
+    }
+
+    let mean_pitch_hz = report
+        .overall
+        .pitch_hz
+        .as_ref()
+        .map(|pitch| pitch.mean)
+        .or_else(|| {
+            let mut sum = 0.0_f32;
+            let mut count = 0usize;
+            for pitch_hz in frames.iter().filter_map(|frame| frame.pitch_hz) {
+                sum += pitch_hz;
+                count += 1;
+            }
+            (count > 0).then_some(sum / count as f32)
+        })
+        .unwrap_or(0.0);
+
+    let mut ranked = Vec::new();
+    for harmonic_index in 1..max_harmonics {
+        let values: Vec<f32> = frames
+            .iter()
+            .filter_map(|frame| {
+                let strength = frame
+                    .harmonic_strengths
+                    .get(harmonic_index)
+                    .copied()
+                    .flatten()?;
+                let value = if perceptual {
+                    perceptual_display_band_height(perceptual_harmonic_contribution(
+                        frame,
+                        harmonic_index,
+                        max_hz,
+                    ))
+                } else {
+                    strength
+                };
+                (value > 0.0 && value.is_finite()).then_some(value)
+            })
+            .collect();
+        if values.is_empty() {
+            continue;
+        }
+
+        let mean_value = values.iter().sum::<f32>() / values.len() as f32;
+        let harmonic_number = harmonic_index + 1;
+        let frequency_hz = mean_pitch_hz * harmonic_number as f32;
+        ranked.push((harmonic_index, mean_value, harmonic_number, frequency_hz));
+    }
+
+    ranked.sort_by(|left, right| right.1.total_cmp(&left.1));
+    ranked
+        .into_iter()
+        .take(10)
+        .map(|(harmonic_index, _mean_value, harmonic_number, frequency_hz)| {
+            HarmonicLegendEntry {
+                label: format!("H{harmonic_number} {:.0} Hz", frequency_hz),
+                color: harmonic_fill_color(harmonic_index, max_harmonics),
+            }
+        })
+        .collect()
 }
 
 fn perceptual_frequency_weight(frequency_hz: f32) -> f32 {
@@ -709,10 +809,8 @@ fn build_spectral_graph(frames: &[FrameAnalysis]) -> Result<Option<GraphImage>, 
     .map(Some)
 }
 
-fn build_perceptual_harmonics_graph(
-    frames: &[FrameAnalysis],
-    max_hz: f32,
-) -> Result<Option<GraphImage>, String> {
+fn build_perceptual_harmonics_graph(report: &AnalysisReport, max_hz: f32) -> Result<Option<GraphImage>, String> {
+    let frames = &report.frames;
     if frames.is_empty() {
         return Ok(None);
     }
@@ -737,6 +835,7 @@ fn build_perceptual_harmonics_graph(
     let x_range = time_range(frames);
     let y_range = perceptual_display_range(&perceptual_totals);
     let runs = voiced_runs(frames);
+    let legend_harmonics = strongest_harmonic_legend_entries(report, true, max_hz);
 
     render_graph(
         "Perceptual harmonic balance",
@@ -811,6 +910,18 @@ fn build_perceptual_harmonics_graph(
                 )))?
                 .label("Perceptual total (H2+)")
                 .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 24, y)], BLACK.stroke_width(2)));
+            for entry in &legend_harmonics {
+                chart
+                    .draw_series(std::iter::once(PathElement::new(
+                        vec![(0.0, 0.0), (0.0, 0.0)],
+                        entry.color.stroke_width(3),
+                    )))?
+                    .label(entry.label.clone())
+                    .legend({
+                        let color = entry.color;
+                        move |(x, y)| PathElement::new(vec![(x, y), (x + 24, y)], color.stroke_width(3))
+                    });
+            }
             Ok(())
         },
     )
