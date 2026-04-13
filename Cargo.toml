@@ -2,6 +2,7 @@
 members = [
     "libvoice",
     "libvoice-wasm", "telegrambot",
+    "voiceanalysis",
     "voiceanalyzercli",
     "voiceanalyzerserver",
 ]

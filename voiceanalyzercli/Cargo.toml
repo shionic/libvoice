@@ -11,4 +11,4 @@ libvoice = { path = "../libvoice" }
 rayon.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-symphonia.workspace = true
+voiceanalysis = { path = "../voiceanalysis" }

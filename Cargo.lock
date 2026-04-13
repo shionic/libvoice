@@ -2706,16 +2706,12 @@ checksum = "20f34339676cdcab560c9a82300c4c2581f68b9369aedf0fae86f2ff9565ff3e"
 name = "telegrambot"
 version = "0.1.0"
 dependencies = [
- "image 0.25.10",
- "libvoice",
  "mime",
- "plotters",
- "symphonia",
  "teloxide",
- "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "voiceanalysis",
 ]
 
 [[package]]
@@ -3194,6 +3190,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "voiceanalysis"
+version = "0.1.0"
+dependencies = [
+ "image 0.25.10",
+ "libvoice",
+ "plotters",
+ "symphonia",
+ "tempfile",
+]
+
+[[package]]
 name = "voiceanalyzercli"
 version = "0.1.0"
 dependencies = [
@@ -3202,7 +3209,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
- "symphonia",
+ "voiceanalysis",
 ]
 
 [[package]]
@@ -3219,8 +3226,8 @@ dependencies = [
  "rmp-serde",
  "serde",
  "serde_json",
- "symphonia",
  "tokio",
+ "voiceanalysis",
 ]
 
 [[package]]

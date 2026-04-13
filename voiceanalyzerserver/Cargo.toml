@@ -16,5 +16,5 @@ libvoice = { path = "../libvoice" }
 serde.workspace = true
 serde_json.workspace = true
 rmp-serde.workspace = true
-symphonia.workspace = true
 tokio.workspace = true
+voiceanalysis = { path = "../voiceanalysis" }

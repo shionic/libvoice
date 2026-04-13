@@ -1,22 +1,16 @@
 use clap::{Parser, ValueEnum};
 use libvoice::{
-    AnalysisReport, AnalyzerConfig, FrameAnalysis, HarmonicSummary, SpectralSummary, SummaryStats,
-    VoiceAnalyzer,
+    AnalysisOutputOptions, AnalysisReport, AnalyzerConfig, FrameAnalysis, HarmonicSummary,
+    SpectralSummary, SummaryStats, VoiceAnalyzer,
 };
 use rayon::prelude::*;
 use serde::Serialize;
 use std::fmt::Write as _;
-use std::fs::File;
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use symphonia::core::audio::{AudioBufferRef, SampleBuffer, Signal};
-use symphonia::core::codecs::{CODEC_TYPE_NULL, DecoderOptions};
-use symphonia::core::errors::Error as SymphoniaError;
-use symphonia::core::formats::FormatOptions;
-use symphonia::core::io::MediaSourceStream;
-use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::Hint;
+use voiceanalysis::{
+    GraphImage, audio_duration_seconds, build_spectrum_feature_graphs, decode_audio_bytes,
+    generate_graphs,
+};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 enum OutputFormat {
@@ -68,6 +62,12 @@ struct Args {
 
     #[arg(long)]
     frame_to: Option<usize>,
+
+    #[arg(long)]
+    graph_dir: Option<PathBuf>,
+
+    #[arg(long, default_value_t = false)]
+    spectrum_graphs: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -80,6 +80,7 @@ struct FileAnalysisOutput {
     report: AnalysisReport,
     voiced_frames: Vec<FrameAnalysis>,
     voiced_intervals: Vec<VoicedInterval>,
+    graph_paths: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -158,6 +159,7 @@ fn main() {
                                 "channels": output.channels,
                                 "duration_seconds": output.duration_seconds,
                                 "voiced_frames": output.voiced_frames,
+                                "graph_paths": output.graph_paths,
                             })
                         })
                         .collect::<Vec<_>>(),
@@ -171,6 +173,7 @@ fn main() {
                         "channels": output.channels,
                         "duration_seconds": output.duration_seconds,
                         "voiced_frames": output.voiced_frames,
+                        "graph_paths": output.graph_paths,
                     })).collect::<Vec<_>>(),
                     "errors": failures,
                 }))
@@ -194,6 +197,7 @@ fn main() {
                                 "channels": output.channels,
                                 "duration_seconds": output.duration_seconds,
                                 "voiced_intervals": output.voiced_intervals,
+                                "graph_paths": output.graph_paths,
                             })
                         })
                         .collect::<Vec<_>>(),
@@ -207,6 +211,7 @@ fn main() {
                         "channels": output.channels,
                         "duration_seconds": output.duration_seconds,
                         "voiced_intervals": output.voiced_intervals,
+                        "graph_paths": output.graph_paths,
                     })).collect::<Vec<_>>(),
                     "errors": failures,
                 }))
@@ -237,6 +242,9 @@ fn validate_args(args: &Args) -> Result<(), String> {
         if frame_from != 0 && frame_to != 0 && frame_from > frame_to {
             return Err("--frame-from must be less than or equal to --frame-to".to_string());
         }
+    }
+    if args.spectrum_graphs && args.graph_dir.is_none() {
+        return Err("--spectrum-graphs requires --graph-dir".to_string());
     }
 
     Ok(())
@@ -294,267 +302,87 @@ fn configure_thread_pool(threads: Option<usize>) -> Result<(), String> {
 }
 
 fn analyze_file(path: &Path, args: &Args) -> Result<FileAnalysisOutput, String> {
-    match analyze_file_with_symphonia(path, args) {
-        Ok(output) => Ok(output),
-        Err(primary_error) => analyze_file_with_ffmpeg(path, args).map_err(|fallback_error| {
-            format!("{primary_error}; ffmpeg fallback failed: {fallback_error}")
-        }),
-    }
+    let bytes = std::fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let decoded = decode_audio_bytes(&bytes, path.file_name().and_then(|name| name.to_str()))
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    let report = VoiceAnalyzer::analyze_buffer_with_output_options(
+        build_config(decoded.sample_rate, args),
+        &decoded.samples,
+        AnalysisOutputOptions {
+            fft_spectrum: args.spectrum_graphs,
+        },
+    );
+    let voiced_frames = report.frames.clone();
+    let duration_seconds = audio_duration_seconds(&decoded);
+    let graph_paths = if args.graph_dir.is_some() {
+        write_graphs(path, &report, args)?
+    } else {
+        Vec::new()
+    };
+
+    Ok(FileAnalysisOutput {
+        path: path.to_path_buf(),
+        backend: decoded.backend,
+        sample_rate: decoded.sample_rate,
+        channels: decoded.channels,
+        duration_seconds,
+        report,
+        voiced_intervals: merge_voiced_intervals(&voiced_frames),
+        voiced_frames,
+        graph_paths,
+    })
 }
 
-fn analyze_file_with_symphonia(path: &Path, args: &Args) -> Result<FileAnalysisOutput, String> {
-    let file = File::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
-    let mss = MediaSourceStream::new(Box::new(file), Default::default());
-    let mut hint = Hint::new();
-    if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
-        hint.with_extension(extension);
-    }
-
-    let probed = symphonia::default::get_probe()
-        .format(
-            &hint,
-            mss,
-            &FormatOptions::default(),
-            &MetadataOptions::default(),
-        )
-        .map_err(|error| format!("{}: failed to probe audio format: {error}", path.display()))?;
-
-    let mut format = probed.format;
-    let track = format
-        .default_track()
-        .ok_or_else(|| format!("{}: no default audio track found", path.display()))?;
-    let codec_params = track.codec_params.clone();
-
-    if codec_params.codec == CODEC_TYPE_NULL {
-        return Err(format!(
-            "{}: unsupported or missing codec parameters",
-            path.display()
-        ));
-    }
-
-    let sample_rate = codec_params.sample_rate.ok_or_else(|| {
+fn write_graphs(path: &Path, report: &AnalysisReport, args: &Args) -> Result<Vec<PathBuf>, String> {
+    let root = args
+        .graph_dir
+        .as_ref()
+        .ok_or_else(|| "graph output directory was not configured".to_string())?;
+    let output_dir = root.join(graph_output_dir_name(path));
+    std::fs::create_dir_all(&output_dir).map_err(|error| {
         format!(
-            "{}: missing sample rate in codec parameters",
-            path.display()
+            "failed to create graph output directory {}: {error}",
+            output_dir.display()
         )
     })?;
-    let channel_count = codec_params
-        .channels
-        .map(|channels| channels.count())
-        .ok_or_else(|| {
-            format!(
-                "{}: missing channel layout in codec parameters",
-                path.display()
-            )
-        })?;
-    let track_id = track.id;
 
-    let mut decoder = symphonia::default::get_codecs()
-        .make(&codec_params, &DecoderOptions::default())
-        .map_err(|error| format!("{}: failed to create decoder: {error}", path.display()))?;
+    let mut graphs = generate_graphs(report)?;
+    if args.spectrum_graphs {
+        graphs.extend(build_spectrum_feature_graphs(report)?);
+    }
 
-    let mut analyzer = VoiceAnalyzer::new(build_config(sample_rate, args));
-    let mut mono_scratch = Vec::new();
-    let mut chunks = Vec::new();
-    let mut voiced_frames = Vec::new();
-    let mut processed_samples = 0usize;
+    let mut written = Vec::with_capacity(graphs.len());
+    for graph in graphs {
+        let output_path = output_dir.join(&graph.file_name);
+        write_graph(&output_path, graph)?;
+        written.push(output_path);
+    }
 
-    loop {
-        let packet = match format.next_packet() {
-            Ok(packet) => packet,
-            Err(SymphoniaError::IoError(error))
-                if error.kind() == std::io::ErrorKind::UnexpectedEof =>
-            {
-                break;
-            }
-            Err(SymphoniaError::ResetRequired) => {
-                return Err(format!(
-                    "{}: decoder reset required; chained streams are not supported",
-                    path.display()
-                ));
-            }
-            Err(error) => {
-                return Err(format!(
-                    "{}: failed while reading packets: {error}",
-                    path.display()
-                ));
-            }
-        };
+    Ok(written)
+}
 
-        if packet.track_id() != track_id {
-            continue;
+fn write_graph(path: &Path, graph: GraphImage) -> Result<(), String> {
+    std::fs::write(path, &graph.png_bytes)
+        .map_err(|error| format!("failed to write graph {}: {error}", path.display()))
+}
+
+fn graph_output_dir_name(path: &Path) -> String {
+    let raw = path.to_string_lossy();
+    let mut out = String::with_capacity(raw.len());
+
+    for ch in raw.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
+            out.push(ch);
+        } else {
+            out.push('_');
         }
-
-        let decoded = match decoder.decode(&packet) {
-            Ok(decoded) => decoded,
-            Err(SymphoniaError::IoError(error))
-                if error.kind() == std::io::ErrorKind::UnexpectedEof =>
-            {
-                break;
-            }
-            Err(SymphoniaError::DecodeError(_)) => continue,
-            Err(error) => {
-                return Err(format!("{}: decode failed: {error}", path.display()));
-            }
-        };
-
-        let mono = fold_to_mono(decoded, channel_count, &mut mono_scratch);
-        processed_samples += mono.len();
-        let (chunk, frames) = analyzer.process_chunk_with_frames(mono);
-        chunks.push(chunk);
-        voiced_frames.extend(frames);
     }
 
-    let report = AnalysisReport {
-        config: analyzer.config().clone(),
-        frames: voiced_frames.clone(),
-        chunks,
-        overall: analyzer.finalize(),
-        fft_spectrum: None,
-    };
-    let duration_seconds = processed_samples as f32 / sample_rate as f32;
-
-    Ok(FileAnalysisOutput {
-        path: path.to_path_buf(),
-        backend: "symphonia",
-        sample_rate,
-        channels: channel_count,
-        duration_seconds,
-        report,
-        voiced_intervals: merge_voiced_intervals(&voiced_frames),
-        voiced_frames,
-    })
-}
-
-fn analyze_file_with_ffmpeg(path: &Path, args: &Args) -> Result<FileAnalysisOutput, String> {
-    let sample_rate = probe_sample_rate_with_ffprobe(path)?;
-    let mut child = Command::new("ffmpeg")
-        .arg("-v")
-        .arg("error")
-        .arg("-i")
-        .arg(path)
-        .arg("-f")
-        .arg("f32le")
-        .arg("-ac")
-        .arg("1")
-        .arg("-")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("{}: failed to start ffmpeg: {error}", path.display()))?;
-
-    let mut stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| format!("{}: ffmpeg stdout was not captured", path.display()))?;
-    let mut stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| format!("{}: ffmpeg stderr was not captured", path.display()))?;
-
-    let mut audio_bytes = Vec::new();
-    stdout
-        .read_to_end(&mut audio_bytes)
-        .map_err(|error| format!("{}: failed to read ffmpeg output: {error}", path.display()))?;
-
-    let mut stderr_bytes = Vec::new();
-    stderr
-        .read_to_end(&mut stderr_bytes)
-        .map_err(|error| format!("{}: failed to read ffmpeg stderr: {error}", path.display()))?;
-
-    let status = child
-        .wait()
-        .map_err(|error| format!("{}: failed to wait for ffmpeg: {error}", path.display()))?;
-    if !status.success() {
-        let stderr_text = String::from_utf8_lossy(&stderr_bytes);
-        let detail = stderr_text.trim();
-        return Err(if detail.is_empty() {
-            format!("{}: ffmpeg exited with {}", path.display(), status)
-        } else {
-            format!("{}: {detail}", path.display())
-        });
+    if out.is_empty() {
+        "input".to_string()
+    } else {
+        out
     }
-
-    if audio_bytes.len() % std::mem::size_of::<f32>() != 0 {
-        return Err(format!(
-            "{}: ffmpeg output length was not aligned to f32 samples",
-            path.display()
-        ));
-    }
-
-    let samples: Vec<f32> = audio_bytes
-        .chunks_exact(std::mem::size_of::<f32>())
-        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-        .collect();
-
-    let mut analyzer = VoiceAnalyzer::new(build_config(sample_rate, args));
-    let (chunk, voiced_frames) = analyzer.process_chunk_with_frames(&samples);
-    let report = AnalysisReport {
-        config: analyzer.config().clone(),
-        frames: voiced_frames.clone(),
-        chunks: vec![chunk],
-        overall: analyzer.finalize(),
-        fft_spectrum: None,
-    };
-    let duration_seconds = samples.len() as f32 / sample_rate as f32;
-
-    Ok(FileAnalysisOutput {
-        path: path.to_path_buf(),
-        backend: "ffmpeg",
-        sample_rate,
-        channels: 1,
-        duration_seconds,
-        report,
-        voiced_intervals: merge_voiced_intervals(&voiced_frames),
-        voiced_frames,
-    })
-}
-
-fn probe_sample_rate_with_ffprobe(path: &Path) -> Result<u32, String> {
-    let output = Command::new("ffprobe")
-        .arg("-v")
-        .arg("error")
-        .arg("-select_streams")
-        .arg("a:0")
-        .arg("-show_entries")
-        .arg("stream=sample_rate")
-        .arg("-of")
-        .arg("default=noprint_wrappers=1:nokey=1")
-        .arg(path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(|error| format!("{}: failed to run ffprobe: {error}", path.display()))?;
-
-    if !output.status.success() {
-        let stderr_text = String::from_utf8_lossy(&output.stderr);
-        let detail = stderr_text.trim();
-        return Err(if detail.is_empty() {
-            format!("{}: ffprobe exited with {}", path.display(), output.status)
-        } else {
-            format!("{}: {detail}", path.display())
-        });
-    }
-
-    let sample_rate = String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .parse::<u32>()
-        .map_err(|error| {
-            format!(
-                "{}: failed to parse ffprobe sample rate: {error}",
-                path.display()
-            )
-        })?;
-    if sample_rate == 0 {
-        return Err(format!(
-            "{}: ffprobe reported a zero sample rate",
-            path.display()
-        ));
-    }
-
-    Ok(sample_rate)
 }
 
 fn build_config(sample_rate: u32, args: &Args) -> AnalyzerConfig {
@@ -569,66 +397,6 @@ fn build_config(sample_rate: u32, args: &Args) -> AnalyzerConfig {
     config.pitch_clarity_threshold = args.pitch_clarity_threshold;
     config.rolloff_ratio = args.rolloff_ratio;
     config
-}
-
-fn fold_to_mono<'a>(
-    decoded: AudioBufferRef<'_>,
-    channel_count: usize,
-    mono: &'a mut Vec<f32>,
-) -> &'a [f32] {
-    let channels = channel_count.max(1);
-    match decoded {
-        AudioBufferRef::F32(buffer) => {
-            average_channels_into(mono, buffer.chan(0).len(), channels, |idx, ch| {
-                *buffer.chan(ch).get(idx).unwrap_or(&0.0)
-            });
-            mono.as_slice()
-        }
-        other => {
-            let mut sample_buffer =
-                SampleBuffer::<f32>::new(other.capacity() as u64, *other.spec());
-            sample_buffer.copy_interleaved_ref(other);
-            let samples = sample_buffer.samples();
-            average_interleaved_channels_into(mono, samples, channels);
-            mono.as_slice()
-        }
-    }
-}
-
-fn average_channels_into<F>(
-    mono: &mut Vec<f32>,
-    frames: usize,
-    channel_count: usize,
-    mut sample_at: F,
-) where
-    F: FnMut(usize, usize) -> f32,
-{
-    mono.clear();
-    mono.reserve(frames.saturating_sub(mono.capacity()));
-    for index in 0..frames {
-        let mut sum = 0.0;
-        for channel in 0..channel_count {
-            sum += sample_at(index, channel);
-        }
-        mono.push(sum / channel_count as f32);
-    }
-}
-
-fn average_interleaved_channels_into(mono: &mut Vec<f32>, samples: &[f32], channel_count: usize) {
-    mono.clear();
-    mono.reserve(
-        samples
-            .len()
-            .saturating_div(channel_count)
-            .saturating_sub(mono.capacity()),
-    );
-    for frame in samples.chunks_exact(channel_count) {
-        let mut sum = 0.0_f32;
-        for &sample in frame {
-            sum += sample;
-        }
-        mono.push(sum / channel_count as f32);
-    }
 }
 
 fn format_text_report(output: &FileAnalysisOutput, args: &Args) -> String {
@@ -666,6 +434,12 @@ fn format_text_report(output: &FileAnalysisOutput, args: &Args) -> String {
         args.frame_from,
         args.frame_to,
     );
+    if !output.graph_paths.is_empty() {
+        writeln!(&mut out, "Graphs:").unwrap();
+        for path in &output.graph_paths {
+            writeln!(&mut out, "  {}", path.display()).unwrap();
+        }
+    }
     out
 }
 

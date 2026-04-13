@@ -1,0 +1,13 @@
+[package]
+name = "voiceanalysis"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+libvoice = { path = "../libvoice" }
+plotters = { version = "0.3.7", default-features = false, features = ["bitmap_backend", "bitmap_encoder", "line_series", "ttf"] }
+symphonia = { workspace = true }
+tempfile = "3"

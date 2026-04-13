@@ -1,20 +1,13 @@
-mod audio;
-mod graphs;
 mod input;
-mod options;
-mod report;
 
-use audio::{analyze_samples, audio_duration_seconds, clip_audio_seconds, decode_audio_bytes};
-use graphs::{GraphImage, build_spectrum_feature_graphs, generate_graphs};
 use input::find_input_audio;
-use options::{ResolvedClip, analyze_usage_hint, parse_analyze_options};
-use report::format_report;
 use teloxide::net::Download;
 use teloxide::prelude::*;
 use teloxide::types::{InputFile, InputMedia, InputMediaPhoto, Message, ParseMode, ThreadId};
 use tokio::task;
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
+use voiceanalysis::{GraphImage, analyze_audio_bytes, analyze_usage_hint, parse_analyze_options};
 
 #[tokio::main]
 async fn main() {
@@ -108,28 +101,8 @@ async fn handle_message(bot: Bot, msg: Message) -> Result<(), String> {
 
     let file_name = input.file_name.clone();
     let (report_text, graphs) = task::spawn_blocking(move || {
-        let decoded = decode_audio_bytes(&bytes, file_name.as_deref())?;
-        let resolved_clip = options
-            .clip
-            .as_ref()
-            .map(|clip| clip.resolve(audio_duration_seconds(&decoded)))
-            .transpose()?;
-        let analysis_audio = match resolved_clip.as_ref() {
-            Some(clip) => clip_audio_seconds(&decoded, clip.from_seconds, clip.to_seconds)?,
-            None => decoded,
-        };
-        let report = analyze_samples(&analysis_audio, options.spectrum, options.high_pitch_mode);
-        let report_label = format_report_label(&input.label, resolved_clip.as_ref());
-        let report_text = format_report(&report_label, &analysis_audio, &report, &options);
-        let mut graphs = if options.graph {
-            generate_graphs(&report)?
-        } else {
-            Vec::new()
-        };
-        if options.spectrum {
-            graphs.extend(build_spectrum_feature_graphs(&report)?);
-        }
-        Ok::<_, String>((report_text, graphs))
+        let rendered = analyze_audio_bytes(&bytes, file_name.as_deref(), &input.label, &options)?;
+        Ok::<_, String>((rendered.report_text, rendered.graphs))
     })
     .await
     .map_err(|error| format!("analysis task failed: {error}"))??;
@@ -143,38 +116,6 @@ async fn handle_message(bot: Bot, msg: Message) -> Result<(), String> {
 
     send_long_message(&bot, msg.chat.id, msg.thread_id, &report_text).await?;
     send_graphs(&bot, msg.chat.id, msg.thread_id, graphs).await
-}
-
-fn format_report_label(label: &str, clip: Option<&ResolvedClip>) -> String {
-    match clip {
-        Some(clip) => format!(
-            "{} [{} .. {}]",
-            label,
-            format_time_seconds(clip.from_seconds),
-            format_time_seconds(clip.to_seconds)
-        ),
-        None => label.to_string(),
-    }
-}
-
-fn format_time_seconds(seconds: f32) -> String {
-    let total_millis = (seconds * 1000.0).round().max(0.0) as u64;
-    let total_seconds = total_millis / 1000;
-    let minutes = total_seconds / 60;
-    let secs = total_seconds % 60;
-    let millis = total_millis % 1000;
-
-    if minutes > 0 {
-        if millis == 0 {
-            format!("{minutes}m{secs:02}s")
-        } else {
-            format!("{minutes}m{secs:02}.{millis:03}s")
-        }
-    } else if millis == 0 {
-        format!("{secs}s")
-    } else {
-        format!("{secs}.{millis:03}s")
-    }
 }
 
 async fn send_long_message(

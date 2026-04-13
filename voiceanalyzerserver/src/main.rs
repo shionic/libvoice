@@ -16,15 +16,8 @@ use rmp_serde::{decode::Error as MsgpackDecodeError, encode::Error as MsgpackEnc
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use std::fmt::{Display, Formatter};
-use std::io::Cursor;
 use std::net::SocketAddr;
-use symphonia::core::audio::{AudioBufferRef, SampleBuffer, Signal};
-use symphonia::core::codecs::{CODEC_TYPE_NULL, DecoderOptions};
-use symphonia::core::errors::Error as SymphoniaError;
-use symphonia::core::formats::FormatOptions;
-use symphonia::core::io::MediaSourceStream;
-use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::Hint;
+use voiceanalysis::{DecodedAudio, audio_duration_seconds, decode_audio_bytes};
 
 const MAX_UPLOAD_BYTES: usize = 256 * 1024 * 1024;
 
@@ -147,14 +140,6 @@ struct ApiError {
     message: String,
 }
 
-#[derive(Debug)]
-struct DecodedAudio {
-    backend: &'static str,
-    sample_rate: u32,
-    channels: usize,
-    samples: Vec<f32>,
-}
-
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
@@ -203,25 +188,9 @@ async fn analyze_handler(
 
     let decoded = decode_one_shot_audio(body.as_ref(), &query)?;
     let config = build_config(decoded.sample_rate, &query)?;
-    let duration_seconds = decoded.samples.len() as f32 / decoded.sample_rate as f32;
-
-    let (report, frames) = if query.include_frames {
-        let mut analyzer = VoiceAnalyzer::new(config.clone());
-        let (chunk, frames) = analyzer.process_chunk_with_frames(&decoded.samples);
-        let report = AnalysisReport {
-            config,
-            frames: frames.clone(),
-            chunks: vec![chunk],
-            overall: analyzer.finalize(),
-            fft_spectrum: None,
-        };
-        (report, Some(frames))
-    } else {
-        (
-            VoiceAnalyzer::analyze_buffer(config, &decoded.samples),
-            None,
-        )
-    };
+    let duration_seconds = audio_duration_seconds(&decoded);
+    let report = VoiceAnalyzer::analyze_buffer(config, &decoded.samples);
+    let frames = query.include_frames.then(|| report.frames.clone());
 
     Ok(Json(AnalyzeResponse {
         backend: decoded.backend.to_string(),
@@ -588,7 +557,7 @@ fn build_config(sample_rate: u32, query: &AnalyzeQuery) -> Result<AnalyzerConfig
 
 fn decode_one_shot_audio(bytes: &[u8], query: &AnalyzeQuery) -> Result<DecodedAudio, ApiError> {
     match query.pcm_encoding.unwrap_or(PcmEncoding::Auto) {
-        PcmEncoding::Auto => decode_with_symphonia(bytes),
+        PcmEncoding::Auto => decode_audio_bytes(bytes, None).map_err(unsupported_media),
         encoding => decode_pcm_bytes(
             bytes,
             encoding,
@@ -598,89 +567,6 @@ fn decode_one_shot_audio(bytes: &[u8], query: &AnalyzeQuery) -> Result<DecodedAu
             query.channels.unwrap_or(1),
         ),
     }
-}
-
-fn decode_with_symphonia(bytes: &[u8]) -> Result<DecodedAudio, ApiError> {
-    let source = MediaSourceStream::new(Box::new(Cursor::new(bytes.to_vec())), Default::default());
-    let probed = symphonia::default::get_probe()
-        .format(
-            &Hint::new(),
-            source,
-            &FormatOptions::default(),
-            &MetadataOptions::default(),
-        )
-        .map_err(|error| unsupported_media(format!("failed to probe audio stream: {error}")))?;
-
-    let mut format = probed.format;
-    let track = format
-        .default_track()
-        .ok_or_else(|| unsupported_media("no default audio track found"))?;
-    let codec_params = track.codec_params.clone();
-    if codec_params.codec == CODEC_TYPE_NULL {
-        return Err(unsupported_media("unsupported or missing codec parameters"));
-    }
-
-    let sample_rate = codec_params
-        .sample_rate
-        .ok_or_else(|| unsupported_media("missing sample rate in audio stream"))?;
-    let channels = codec_params
-        .channels
-        .map(|layout| layout.count())
-        .ok_or_else(|| unsupported_media("missing channel layout in audio stream"))?;
-    let track_id = track.id;
-
-    let mut decoder = symphonia::default::get_codecs()
-        .make(&codec_params, &DecoderOptions::default())
-        .map_err(|error| unsupported_media(format!("failed to create decoder: {error}")))?;
-
-    let mut mono_scratch = Vec::new();
-    let mut samples = Vec::new();
-
-    loop {
-        let packet = match format.next_packet() {
-            Ok(packet) => packet,
-            Err(SymphoniaError::IoError(error))
-                if error.kind() == std::io::ErrorKind::UnexpectedEof =>
-            {
-                break;
-            }
-            Err(SymphoniaError::ResetRequired) => {
-                return Err(unsupported_media(
-                    "decoder reset required; chained streams are not supported",
-                ));
-            }
-            Err(error) => {
-                return Err(unsupported_media(format!(
-                    "failed while reading packets: {error}"
-                )));
-            }
-        };
-
-        if packet.track_id() != track_id {
-            continue;
-        }
-
-        let decoded = match decoder.decode(&packet) {
-            Ok(decoded) => decoded,
-            Err(SymphoniaError::IoError(error))
-                if error.kind() == std::io::ErrorKind::UnexpectedEof =>
-            {
-                break;
-            }
-            Err(SymphoniaError::DecodeError(_)) => continue,
-            Err(error) => return Err(unsupported_media(format!("decode failed: {error}"))),
-        };
-
-        let mono = fold_to_mono(decoded, channels, &mut mono_scratch);
-        samples.extend_from_slice(mono);
-    }
-
-    Ok(DecodedAudio {
-        backend: "symphonia",
-        sample_rate,
-        channels,
-        samples,
-    })
 }
 
 fn decode_pcm_bytes(
@@ -785,67 +671,6 @@ fn encode_ws_server_event(event: &WsServerEvent) -> Result<Vec<u8>, MsgpackEncod
 
 fn format_msgpack_decode_error(error: MsgpackDecodeError) -> String {
     format!("invalid MessagePack websocket payload: {error}")
-}
-
-fn fold_to_mono<'a>(
-    decoded: AudioBufferRef<'_>,
-    channel_count: usize,
-    mono: &'a mut Vec<f32>,
-) -> &'a [f32] {
-    let channels = channel_count.max(1);
-    match decoded {
-        AudioBufferRef::F32(buffer) => {
-            average_channels_into(mono, buffer.chan(0).len(), channels, |index, channel| {
-                *buffer.chan(channel).get(index).unwrap_or(&0.0)
-            });
-            mono.as_slice()
-        }
-        other => {
-            let mut sample_buffer =
-                SampleBuffer::<f32>::new(other.capacity() as u64, *other.spec());
-            sample_buffer.copy_interleaved_ref(other);
-            let samples = sample_buffer.samples();
-            average_interleaved_channels_into(mono, samples, channels);
-            mono.as_slice()
-        }
-    }
-}
-
-fn average_channels_into<F>(
-    mono: &mut Vec<f32>,
-    frames: usize,
-    channel_count: usize,
-    mut sample_at: F,
-) where
-    F: FnMut(usize, usize) -> f32,
-{
-    mono.clear();
-    mono.reserve(frames.saturating_sub(mono.capacity()));
-    for index in 0..frames {
-        let mut sum = 0.0_f32;
-        for channel in 0..channel_count {
-            sum += sample_at(index, channel);
-        }
-        mono.push(sum / channel_count as f32);
-    }
-}
-
-fn average_interleaved_channels_into(mono: &mut Vec<f32>, samples: &[f32], channel_count: usize) {
-    mono.clear();
-    mono.reserve(
-        samples
-            .len()
-            .saturating_div(channel_count)
-            .saturating_sub(mono.capacity()),
-    );
-
-    for frame in samples.chunks_exact(channel_count) {
-        let mut sum = 0.0_f32;
-        for &sample in frame {
-            sum += sample;
-        }
-        mono.push(sum / channel_count as f32);
-    }
 }
 
 fn event_line(event: &StreamEvent) -> Bytes {

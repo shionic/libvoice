@@ -9,6 +9,7 @@ const HEIGHT: u32 = 1440;
 type Chart2d<'a, 'b> =
     ChartContext<'a, BitMapBackend<'b>, Cartesian2d<RangedCoordf32, RangedCoordf32>>;
 
+#[derive(Debug)]
 pub struct GraphImage {
     pub file_name: String,
     pub title: String,
