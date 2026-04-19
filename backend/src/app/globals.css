@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f4efe3;
+  --foreground: #1f1b16;
+  --panel: rgba(255, 255, 255, 0.72);
+  --font-sans: "Avenir Next", "Trebuchet MS", "Segoe UI", sans-serif;
+  --font-display: "Avenir Next Condensed", "Gill Sans", "Trebuchet MS", sans-serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", "Consolas", monospace;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  --font-display: var(--font-display);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+}
+
+body {
+  min-height: 100%;
+  background: var(--background);
+  background-image:
+    radial-gradient(circle at top left, rgba(209, 171, 111, 0.36), transparent 30%),
+    radial-gradient(circle at top right, rgba(48, 105, 86, 0.2), transparent 26%),
+    linear-gradient(180deg, #f4efe3 0%, #efe6d8 45%, #e8dccb 100%);
+  color: var(--foreground);
+  font-family: var(--font-sans), sans-serif;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image: linear-gradient(
+    rgba(56, 46, 31, 0.045) 1px,
+    transparent 1px
+  );
+  background-size: 100% 26px;
+  opacity: 0.3;
+}
+
+a,
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}

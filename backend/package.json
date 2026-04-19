@@ -1,0 +1,43 @@
+{
+  "name": "voicelib-rating",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -k -n web,api \"npm run dev:web\" \"npm run dev:api\"",
+    "dev:web": "next dev",
+    "dev:api": "ts-node-dev --project tsconfig.server.json --respawn --transpile-only src/server/main.ts",
+    "build": "npm run build:web && npm run build:api",
+    "build:web": "next build --webpack",
+    "build:api": "tsc -p tsconfig.server.json",
+    "start": "concurrently -k -n web,api \"npm run start:web\" \"npm run start:api\"",
+    "start:web": "next start",
+    "start:api": "node dist/server/server/main.js",
+    "db:migrate": "ts-node --project tsconfig.server.json src/server/migrate.ts",
+    "cli": "ts-node --project tsconfig.server.json src/server/cli.ts"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.1.19",
+    "@nestjs/config": "^4.0.4",
+    "@nestjs/core": "^11.1.19",
+    "@nestjs/platform-express": "^11.1.19",
+    "csv-parse": "^6.2.1",
+    "next": "16.2.4",
+    "pg": "^8.20.0",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/pg": "^8.20.0",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "concurrently": "^9.2.1",
+    "tailwindcss": "^4",
+    "ts-node": "^10.9.2",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5"
+  }
+}
