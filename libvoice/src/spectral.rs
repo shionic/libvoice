@@ -42,7 +42,8 @@ impl FrameAnalyzer {
             .map(|&hz| if hz > 0.0 { hz.log2() } else { 0.0 })
             .collect::<Vec<_>>();
         let tilt_start_bin = ((TILT_MIN_FREQUENCY_HZ / bin_hz).ceil().max(1.0)) as usize;
-        let tilt_end_bin = ((TILT_MAX_FREQUENCY_HZ / bin_hz).floor() as usize).min(bin_count.saturating_sub(1));
+        let tilt_end_bin =
+            ((TILT_MAX_FREQUENCY_HZ / bin_hz).floor() as usize).min(bin_count.saturating_sub(1));
 
         Self {
             config,
@@ -156,13 +157,12 @@ impl FrameAnalyzer {
             0.0
         };
 
-        let spectral_tilt_db_per_octave =
-            estimate_spectral_tilt_db_per_octave(
-                &self.magnitudes,
-                &self.log2_hz_by_bin,
-                self.tilt_start_bin,
-                self.tilt_end_bin,
-            );
+        let spectral_tilt_db_per_octave = estimate_spectral_tilt_db_per_octave(
+            &self.magnitudes,
+            &self.log2_hz_by_bin,
+            self.tilt_start_bin,
+            self.tilt_end_bin,
+        );
 
         let pitch = self.pitch_analyzer.estimate_pitch_hz(
             frame,

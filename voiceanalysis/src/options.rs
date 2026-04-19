@@ -39,7 +39,7 @@ impl Default for AnalyzeOptions {
             energy: false,
             harmonics: false,
             high_pitch_mode: false,
-            graph: false,
+            graph: true,
             clip: None,
         }
     }
@@ -152,7 +152,7 @@ pub fn parse_analyze_options(text: &str) -> Result<AnalyzeOptions, String> {
 }
 
 pub fn analyze_usage_hint() -> &'static str {
-    "Reply to a voice message or audio file with <code>/analyze</code>.\nDefault sections: <code>+pitch +hnr +spectral</code>\nExtra features: <code>+harmonics +energy +graph +spectrum +high-pitch</code>\nClip syntax: <code>+from 20s +to 1m40s</code> or <code>+from 20s +dur 20s</code>\nExample: <code>/analyze +high-pitch +graph +spectrum +from 20s +dur 20s -spectral</code>"
+    "Reply to a voice message or audio file with <code>/analyze</code>.\nDefault sections: <code>+pitch +hnr +spectral +graph</code>\nExtra features: <code>+harmonics +energy +spectrum +high-pitch</code>\nClip syntax: <code>+from 20s +to 1m40s</code> or <code>+from 20s +dur 20s</code>\nExample: <code>/analyze +high-pitch +spectrum +from 20s +dur 20s -spectral</code>"
 }
 
 impl ClipSpec {
@@ -249,6 +249,12 @@ fn format_time_seconds(seconds: f32) -> String {
 #[cfg(test)]
 mod tests {
     use super::{ClipEnd, parse_analyze_options};
+
+    #[test]
+    fn enables_graph_by_default() {
+        let options = parse_analyze_options("/analyze").unwrap();
+        assert!(options.graph);
+    }
 
     #[test]
     fn parses_from_to_clip() {

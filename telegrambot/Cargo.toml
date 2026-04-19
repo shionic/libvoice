@@ -8,6 +8,7 @@ rust-version.workspace = true
 [dependencies]
 mime = "0.3"
 teloxide = { version = "0.17.0", features = ["ctrlc_handler", "rustls"] }
+tempfile = "3"
 tokio = { workspace = true }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }

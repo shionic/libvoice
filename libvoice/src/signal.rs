@@ -191,7 +191,11 @@ fn squared_difference_sum(left: &[f32], right: &[f32]) -> f32 {
     }
 
     let mut sum = (sum0 + sum1) + (sum2 + sum3);
-    for (&a, &b) in left_chunks.remainder().iter().zip(right_chunks.remainder().iter()) {
+    for (&a, &b) in left_chunks
+        .remainder()
+        .iter()
+        .zip(right_chunks.remainder().iter())
+    {
         let delta = a - b;
         sum += delta * delta;
     }
@@ -248,7 +252,11 @@ fn correlation_sums(left: &[f32], right: &[f32]) -> (f32, f32, f32) {
     let mut energy_a = (energy_a0 + energy_a1) + (energy_a2 + energy_a3);
     let mut energy_b = (energy_b0 + energy_b1) + (energy_b2 + energy_b3);
 
-    for (&a, &b) in left_chunks.remainder().iter().zip(right_chunks.remainder().iter()) {
+    for (&a, &b) in left_chunks
+        .remainder()
+        .iter()
+        .zip(right_chunks.remainder().iter())
+    {
         dot += a * b;
         energy_a += a * a;
         energy_b += b * b;

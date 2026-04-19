@@ -100,7 +100,11 @@ impl VoiceAnalyzer {
                         &self.overall_frames,
                         0.0,
                     );
-                    frames.push(self.build_frame_analysis(frame_start_sample, features, cumulative));
+                    frames.push(self.build_frame_analysis(
+                        frame_start_sample,
+                        features,
+                        cumulative,
+                    ));
                 }
             }
         }

@@ -21,10 +21,16 @@ Reply to a voice message or audio file with:
 /analyze
 ```
 
+Re-upload a voice message or audio file as a Telegram voice note with:
+
+```text
+/voice
+```
+
 Default features:
 
 ```text
-+pitch +hnr +spectral
++pitch +hnr +spectral +graph
 ```
 
 Enable or disable features explicitly:

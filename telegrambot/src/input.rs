@@ -5,6 +5,8 @@ pub struct InputAudio {
     pub file_id: FileId,
     pub file_name: Option<String>,
     pub label: String,
+    pub duration_seconds: Option<u32>,
+    pub is_voice_message: bool,
 }
 
 pub fn find_input_audio(msg: &Message) -> Option<InputAudio> {
@@ -18,6 +20,8 @@ fn extract_audio_from_message(msg: &Message) -> Option<InputAudio> {
             file_id: voice.file.id.clone(),
             file_name: Some("voice.ogg".to_string()),
             label: "voice message".to_string(),
+            duration_seconds: Some(voice.duration.seconds()),
+            is_voice_message: true,
         });
     }
 
@@ -32,6 +36,8 @@ fn extract_audio_from_message(msg: &Message) -> Option<InputAudio> {
                 .file_name
                 .clone()
                 .unwrap_or_else(|| "audio file".to_string()),
+            duration_seconds: Some(audio.duration.seconds()),
+            is_voice_message: false,
         });
     }
 
@@ -47,6 +53,8 @@ fn extract_audio_from_message(msg: &Message) -> Option<InputAudio> {
             .file_name
             .clone()
             .unwrap_or_else(|| "audio file".to_string()),
+        duration_seconds: None,
+        is_voice_message: false,
     })
 }
 
