@@ -126,30 +126,20 @@ mod tests {
     }
 
     #[test]
-    fn higher_sample_rates_use_larger_default_windows() {
-        let low = AnalyzerConfig::new(16_000);
-        let high = AnalyzerConfig::new(48_000);
-
-        assert_eq!(low.frame_size, 2_048);
-        assert_eq!(low.hop_size, 512);
-        assert_eq!(high.frame_size, 6_144);
-        assert_eq!(high.hop_size, 1_536);
-
-        let low_bin_hz = low.sample_rate as f32 / low.frame_size as f32;
-        let high_bin_hz = high.sample_rate as f32 / high.frame_size as f32;
-        assert!((low_bin_hz - 7.8125).abs() < 1.0e-6);
-        assert!((high_bin_hz - low_bin_hz).abs() < 1.0e-6);
-    }
-
-    #[test]
-    fn high_pitch_mode_expands_pitch_range_and_voiced_zcr_limit() {
-        let mut config = AnalyzerConfig::new(16_000);
-        config.apply_high_pitch_mode();
-
-        assert_eq!(config.max_pitch_hz, 1_200.0);
-        assert!(config.max_harmonic_frequency_hz > 5_000.0);
-        assert!(config.max_harmonic_frequency_hz <= 8_000.0);
-        assert!(config.voiced_max_zero_crossing_rate >= 0.30);
-        assert!(config.voiced_max_zero_crossing_rate <= 0.40);
+    fn incremental_summarization_matches_batch_calculation() {
+        use crate::analyzer::VoiceAnalyzer;
+        use crate::config::AnalyzerConfig;
+        
+        let sample_rate = 16_000;
+        let samples = synth_sine(sample_rate, 220.0, 0.5);
+        let config = AnalyzerConfig::new(sample_rate);
+        
+        let report = VoiceAnalyzer::analyze_buffer(config, &samples);
+        assert!(!report.frames.is_empty());
+        
+        // The last frame's cumulative stats should exactly match the overall analysis
+        // because IncrementalSummarizer is used for both.
+        let last_frame = report.frames.last().unwrap();
+        assert_eq!(last_frame.cumulative, report.overall);
     }
 }

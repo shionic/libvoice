@@ -68,9 +68,11 @@ pub fn build_spectrum_graph(report: &AnalysisReport) -> Result<Option<GraphImage
         return Ok(None);
     }
 
+    let min_display_hz = 50.0_f32;
     let mut peak_db = f32::NEG_INFINITY;
     for frame in &spectrum.frames {
-        for magnitude in frame.magnitudes.iter().take(max_bin + 1).skip(1) {
+        for bin in 1..=max_bin {
+            let magnitude = frame.magnitudes[bin];
             peak_db = peak_db.max(20.0 * magnitude.max(1.0e-12).log10());
         }
     }
@@ -84,77 +86,132 @@ pub fn build_spectrum_graph(report: &AnalysisReport) -> Result<Option<GraphImage
             .last()
             .map(|frame| frame.end_seconds)
             .unwrap_or(0.01);
-    let y_range = 0.0_f32..max_hz;
+    
+    // Logarithmic Y-axis range
+    let y_range = (min_display_hz..max_hz).log_scale();
 
     let mut buffer = vec![255u8; (WIDTH * HEIGHT * 3) as usize];
-    let root = BitMapBackend::with_buffer(&mut buffer, (WIDTH, HEIGHT)).into_drawing_area();
-    root.fill(&WHITE).map_err(draw_err)?;
+    {
+        let root = BitMapBackend::with_buffer(&mut buffer, (WIDTH, HEIGHT)).into_drawing_area();
+        root.fill(&WHITE).map_err(draw_err)?;
 
-    let mut chart = ChartBuilder::on(&root)
-        .margin(24)
-        .caption("Voice spectrogram", ("sans-serif", 34))
-        .x_label_area_size(56)
-        .y_label_area_size(72)
-        .build_cartesian_2d(x_range, y_range)
-        .map_err(draw_err)?;
+        let (spectrogram_area, colorbar_area) = root.split_horizontally(WIDTH - 120);
 
-    chart
-        .configure_mesh()
-        .x_desc("Time (s)")
-        .y_desc("Frequency (Hz)")
-        .light_line_style(RGBColor(220, 220, 220))
-        .draw()
-        .map_err(draw_err)?;
+        let mut chart = ChartBuilder::on(&spectrogram_area)
+            .margin(24)
+            .caption("Voice spectrogram (log scale)", ("sans-serif", 34))
+            .x_label_area_size(56)
+            .y_label_area_size(84)
+            .build_cartesian_2d(x_range, y_range)
+            .map_err(draw_err)?;
 
-    for frame in &spectrum.frames {
-        let top_bin = max_bin.min(frame.magnitudes.len().saturating_sub(1));
-        if top_bin < 1 {
-            continue;
+        chart
+            .configure_mesh()
+            .x_desc("Time (s)")
+            .y_desc("Frequency (Hz)")
+            .y_label_formatter(&|y| {
+                if *y >= 1000.0 {
+                    format!("{:.1}k", y / 1000.0)
+                } else {
+                    format!("{:.0}", y)
+                }
+            })
+            .light_line_style(RGBColor(220, 220, 220))
+            .draw()
+            .map_err(draw_err)?;
+
+        let dynamic_range_db = 75.0_f32;
+
+        for frame in &spectrum.frames {
+            let top_bin = max_bin.min(frame.magnitudes.len().saturating_sub(1));
+            if top_bin < 1 {
+                continue;
+            }
+
+            for bin in 1..=top_bin {
+                let lower_hz = (bin - 1) as f32 * spectrum.bin_hz;
+                let upper_hz = bin as f32 * spectrum.bin_hz;
+                
+                // Clip to display range
+                if upper_hz < min_display_hz {
+                    continue;
+                }
+                let draw_lower_hz = lower_hz.max(min_display_hz);
+
+                let db = 20.0 * frame.magnitudes[bin].max(1.0e-12).log10();
+                let normalized = ((db - peak_db + dynamic_range_db) / dynamic_range_db).clamp(0.0, 1.0);
+                let color = spectrogram_color(normalized, frame.is_voiced);
+                
+                chart
+                    .draw_series(std::iter::once(Rectangle::new(
+                        [
+                            (frame.start_seconds, draw_lower_hz),
+                            (frame.end_seconds, upper_hz),
+                        ],
+                        color.filled(),
+                    )))
+                    .map_err(draw_err)?;
+            }
         }
 
-        for bin in 1..=top_bin {
-            let lower_hz = (bin - 1) as f32 * spectrum.bin_hz;
-            let upper_hz = bin as f32 * spectrum.bin_hz;
-            let db = 20.0 * frame.magnitudes[bin].max(1.0e-12).log10();
-            let normalized = ((db - peak_db + 80.0) / 80.0).clamp(0.0, 1.0);
-            let color = spectrogram_color(normalized, frame.is_voiced);
-            chart
-                .draw_series(std::iter::once(Rectangle::new(
-                    [
-                        (frame.start_seconds, lower_hz),
-                        (frame.end_seconds, upper_hz),
-                    ],
-                    color.filled(),
-                )))
-                .map_err(draw_err)?;
+        // Draw pitch contour
+        for run in voiced_runs(&report.frames) {
+            for segment in segmented_optional_series(
+                run.iter()
+                    .map(|frame| (frame.start_seconds, frame.pitch_hz)),
+            ) {
+                chart
+                    .draw_series(LineSeries::new(segment, WHITE.stroke_width(2)))
+                    .map_err(draw_err)?
+                    .label("Pitch")
+                    .legend(|(x, y)| {
+                        PathElement::new(vec![(x, y), (x + 24, y)], WHITE.stroke_width(2))
+                    });
+            }
         }
+
+        chart
+            .configure_series_labels()
+            .background_style(BLACK.mix(0.55))
+            .border_style(WHITE)
+            .draw()
+            .map_err(draw_err)?;
+
+        // Draw color bar
+        let mut colorbar_chart = ChartBuilder::on(&colorbar_area)
+            .margin_top(100)
+            .margin_bottom(100)
+            .margin_left(10)
+            .margin_right(40)
+            .x_label_area_size(0)
+            .y_label_area_size(40)
+            .build_cartesian_2d(0.0..1.0, -dynamic_range_db..0.0)
+            .map_err(draw_err)?;
+
+        colorbar_chart
+            .configure_mesh()
+            .disable_x_mesh()
+            .disable_x_axis()
+            .y_desc("dB relative to peak")
+            .axis_desc_style(("sans-serif", 15))
+            .draw()
+            .map_err(draw_err)?;
+
+        let bar_steps = 100;
+        for i in 0..bar_steps {
+            let n_lower = i as f32 / bar_steps as f32;
+            let n_upper = (i + 1) as f32 / bar_steps as f32;
+            let db_lower = -dynamic_range_db + n_lower * dynamic_range_db;
+            let db_upper = -dynamic_range_db + n_upper * dynamic_range_db;
+            let color = spectrogram_color(n_lower, true);
+            colorbar_chart.draw_series(std::iter::once(Rectangle::new(
+                [(0.0, db_lower), (1.0, db_upper)],
+                color.filled(),
+            ))).map_err(draw_err)?;
+        }
+
+        root.present().map_err(draw_err)?;
     }
-
-    for run in voiced_runs(&report.frames) {
-        for segment in segmented_optional_series(
-            run.iter()
-                .map(|frame| (frame.start_seconds, frame.pitch_hz)),
-        ) {
-            chart
-                .draw_series(LineSeries::new(segment, WHITE.stroke_width(2)))
-                .map_err(draw_err)?
-                .label("Pitch")
-                .legend(|(x, y)| {
-                    PathElement::new(vec![(x, y), (x + 24, y)], WHITE.stroke_width(2))
-                });
-        }
-    }
-
-    chart
-        .configure_series_labels()
-        .background_style(BLACK.mix(0.55))
-        .border_style(WHITE)
-        .draw()
-        .map_err(draw_err)?;
-
-    drop(chart);
-    root.present().map_err(draw_err)?;
-    drop(root);
 
     Ok(Some(GraphImage {
         file_name: "voice_spectrogram.png".to_string(),

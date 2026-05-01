@@ -5,7 +5,7 @@ use crate::model::{
 };
 use crate::signal::hann_window;
 use crate::spectral::FrameAnalyzer;
-use crate::summary::{summarize_chunk, summarize_overall};
+use crate::summary::{summarize_chunk, IncrementalSummarizer};
 
 #[derive(Debug, Clone)]
 pub struct AnalysisOutputOptions {
@@ -32,6 +32,7 @@ pub struct VoiceAnalyzer {
     next_chunk_index: usize,
     next_frame_index: usize,
     overall_frames: Vec<FrameFeatures>,
+    incremental_summarizer: IncrementalSummarizer,
     fft_spectrum_frames: Option<Vec<FftSpectrumFrame>>,
 }
 
@@ -59,6 +60,7 @@ impl VoiceAnalyzer {
             next_chunk_index: 0,
             next_frame_index: 0,
             overall_frames: Vec::with_capacity(32),
+            incremental_summarizer: IncrementalSummarizer::new(),
             fft_spectrum_frames,
         }
     }
@@ -94,11 +96,12 @@ impl VoiceAnalyzer {
             if is_voiced {
                 frame_features.push(features.clone());
                 self.overall_frames.push(features.clone());
+                self.incremental_summarizer.add_frame(&features);
+
                 if self.output_options.frame_analysis {
-                    let cumulative = summarize_overall(
+                    let cumulative = self.incremental_summarizer.summarize(
                         frame_start_sample + self.config.frame_size,
-                        &self.overall_frames,
-                        0.0,
+                        self.overall_frames.len(),
                     );
                     frames.push(self.build_frame_analysis(
                         frame_start_sample,
@@ -125,11 +128,8 @@ impl VoiceAnalyzer {
     }
 
     pub fn finalize(&self) -> OverallAnalysis {
-        summarize_overall(
-            self.processed_samples,
-            &self.overall_frames,
-            self.config.frame_step_seconds(),
-        )
+        self.incremental_summarizer
+            .summarize(self.processed_samples, self.overall_frames.len())
     }
 
     pub fn analyze_buffer(config: AnalyzerConfig, samples: &[f32]) -> AnalysisReport {

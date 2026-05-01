@@ -8,6 +8,6 @@ rust-version.workspace = true
 [dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }
 libvoice = { path = "../libvoice" }
-plotters = { version = "0.3.7", default-features = false, features = ["bitmap_backend", "bitmap_encoder", "line_series", "ttf"] }
+plotters = { version = "0.3.7", default-features = false, features = ["bitmap_backend", "bitmap_encoder", "line_series", "ttf", "full_palette"] }
 symphonia = { workspace = true }
 tempfile = "3"

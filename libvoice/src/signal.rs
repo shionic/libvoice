@@ -53,10 +53,17 @@ impl PitchAnalyzer {
         self.difference[0] = 0.0;
         self.cmndf[0] = 1.0;
 
+        let integration_window = frame_len - upper_lag;
+        if integration_window < 2 {
+            return None;
+        }
+
         let centered = &self.centered[..frame_len];
         for lag in 1..=upper_lag {
-            self.difference[lag] =
-                squared_difference_sum(&centered[..frame_len - lag], &centered[lag..]);
+            self.difference[lag] = squared_difference_sum(
+                &centered[..integration_window],
+                &centered[lag..lag + integration_window],
+            );
         }
 
         let mut running_sum = 0.0_f32;
@@ -105,8 +112,7 @@ impl PitchAnalyzer {
             return None;
         }
 
-        let lag_index = refined_lag.round() as usize;
-        let periodicity = normalized_autocorrelation(&self.centered, lag_index)
+        let periodicity = interpolated_normalized_autocorrelation(&self.centered, refined_lag)
             .min(clarity)
             .max(0.0);
 
@@ -150,6 +156,18 @@ fn parabolic_refine(index: usize, values: &[f32]) -> f32 {
     }
 
     index as f32 + 0.5 * (left - right) / denominator
+}
+
+fn interpolated_normalized_autocorrelation(signal: &[f32], lag: f32) -> f32 {
+    let lower = lag.floor() as usize;
+    let upper = lag.ceil() as usize;
+    if lower == upper {
+        return normalized_autocorrelation(signal, lower);
+    }
+    let weight = lag - lower as f32;
+    let auto_lower = normalized_autocorrelation(signal, lower);
+    let auto_upper = normalized_autocorrelation(signal, upper);
+    auto_lower * (1.0 - weight) + auto_upper * weight
 }
 
 fn normalized_autocorrelation(signal: &[f32], lag: usize) -> f32 {

@@ -327,4 +327,29 @@ mod tests {
         );
         assert!(tilt < -1.0, "tilt={tilt}");
     }
+
+    #[test]
+    fn rising_spectrum_has_positive_tilt() {
+        let magnitudes = (0..513)
+            .map(|index| {
+                let hz = index as f32 * 15.625;
+                if hz <= 0.0 { 0.001 } else { hz.sqrt() }
+            })
+            .collect::<Vec<_>>();
+        let bin_hz = 15.625;
+        let hz_by_bin = (0..magnitudes.len())
+            .map(|index| index as f32 * bin_hz)
+            .collect::<Vec<_>>();
+        let log2_hz_by_bin = hz_by_bin
+            .iter()
+            .map(|&hz| if hz > 0.0 { hz.log2() } else { 0.0 })
+            .collect::<Vec<_>>();
+        let tilt = estimate_spectral_tilt_db_per_octave(
+            &magnitudes,
+            &log2_hz_by_bin,
+            6,
+            magnitudes.len() - 1,
+        );
+        assert!(tilt > 1.0, "tilt={tilt}");
+    }
 }
