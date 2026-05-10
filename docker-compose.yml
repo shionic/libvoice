@@ -2,16 +2,18 @@ services:
   voiceanalyzerserver:
     build:
       context: .
-      dockerfile: Dockerfile.server-cli
+      dockerfile: Dockerfile
       target: server
     ports:
       - "3000:3000"
     restart: unless-stopped
+    depends_on:
+      - db
 
   voiceanalyzercli:
     build:
       context: .
-      dockerfile: Dockerfile.server-cli
+      dockerfile: Dockerfile
       target: cli
     profiles:
       - tools
@@ -24,8 +26,54 @@ services:
   telegrambot:
     build:
       context: .
-      dockerfile: telegrambot/Dockerfile
+      dockerfile: Dockerfile
+      target: telegrambot
     environment:
       TELOXIDE_TOKEN: ${TELOXIDE_TOKEN:?set TELOXIDE_TOKEN before starting telegrambot}
       RUST_LOG: ${RUST_LOG:-telegrambot=info,teloxide=info}
     restart: unless-stopped
+
+  mlprocess:
+    profiles:
+      - heavy
+    build:
+      context: ./mlprocess
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./mlprocess/models:/app/models
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "3001:3001"
+    environment:
+      PORT: 3001
+      DATABASE_HOST: db
+      DATABASE_PORT: 5432
+      DATABASE_NAME: voicelib
+      DATABASE_USER: voicelib
+      DATABASE_PASSWORD: voicelib
+      VOICE_ANALYZER_API: http://voiceanalyzerserver:3000
+      ML_PROCESS_API: http://mlprocess:8000
+    depends_on:
+      - db
+      - voiceanalyzerserver
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: voicelib
+      POSTGRES_PASSWORD: voicelib
+      POSTGRES_DB: voicelib
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

@@ -5,6 +5,7 @@ members = [
     "voiceanalysis",
     "voiceanalyzercli",
     "voiceanalyzerserver",
+    "voice-assistant2/src-tauri",
 ]
 resolver = "3"
 

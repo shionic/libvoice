@@ -77,6 +77,8 @@ impl PitchAnalyzer {
         }
 
         let yin_threshold = (1.0 - clarity_threshold).clamp(0.05, 0.40);
+        
+        // Find the first local minimum that crosses the threshold
         let mut best_lag = None;
         for lag in min_lag.max(2)..upper_lag.saturating_sub(1) {
             if self.cmndf[lag] <= yin_threshold
@@ -88,9 +90,14 @@ impl PitchAnalyzer {
             }
         }
 
+        // If no threshold crossing found, use global minimum
         let best_lag = best_lag.or_else(|| {
             (min_lag..=upper_lag).min_by(|a, b| self.cmndf[*a].total_cmp(&self.cmndf[*b]))
         })?;
+        
+        // Check if this might be a harmonic instead of the fundamental
+        // by looking for a strong subharmonic at 2x or 3x the lag
+        let best_lag = check_for_subharmonic(best_lag, &self.cmndf, min_lag, upper_lag);
 
         let clarity = 1.0 - self.cmndf[best_lag];
         if clarity < clarity_threshold {
@@ -219,6 +226,54 @@ fn squared_difference_sum(left: &[f32], right: &[f32]) -> f32 {
     }
 
     sum
+}
+
+/// Check if the detected lag might be a harmonic instead of the fundamental.
+/// Returns a corrected lag if a strong subharmonic is found, otherwise returns the original lag.
+fn check_for_subharmonic(
+    lag: usize,
+    cmndf: &[f32],
+    min_lag: usize,
+    max_lag: usize,
+) -> usize {
+    let lag_cmndf = cmndf[lag];
+    
+    // Only check for subharmonics if:
+    // 1. The current detection has very good clarity (CMNDF < 0.1, i.e., clarity > 0.9)
+    // 2. The lag is relatively small (high frequency), where octave errors are more common
+    // This conservative approach avoids false corrections on pure tones
+    if lag_cmndf > 0.1 || lag > 50 {
+        return lag;
+    }
+    
+    // Check for 2x subharmonic (octave below)
+    let subharmonic_2x = (lag as f32 * 2.0).round() as usize;
+    if subharmonic_2x >= min_lag && subharmonic_2x <= max_lag && subharmonic_2x + 1 < cmndf.len() {
+        let sub_cmndf = cmndf[subharmonic_2x];
+        
+        // Check if it's a local minimum
+        if sub_cmndf <= cmndf[subharmonic_2x - 1] && sub_cmndf <= cmndf[subharmonic_2x + 1] {
+            // Only prefer the subharmonic if it has BETTER clarity (not just comparable)
+            // This ensures we only correct when there's strong evidence
+            if sub_cmndf < lag_cmndf - 0.02 && sub_cmndf < 0.15 {
+                return subharmonic_2x;
+            }
+        }
+    }
+    
+    // Check for 3x subharmonic
+    let subharmonic_3x = (lag as f32 * 3.0).round() as usize;
+    if subharmonic_3x >= min_lag && subharmonic_3x <= max_lag && subharmonic_3x + 1 < cmndf.len() {
+        let sub_cmndf = cmndf[subharmonic_3x];
+        
+        if sub_cmndf <= cmndf[subharmonic_3x - 1] && sub_cmndf <= cmndf[subharmonic_3x + 1] {
+            if sub_cmndf < lag_cmndf - 0.02 && sub_cmndf < 0.15 {
+                return subharmonic_3x;
+            }
+        }
+    }
+    
+    lag
 }
 
 fn correlation_sums(left: &[f32], right: &[f32]) -> (f32, f32, f32) {

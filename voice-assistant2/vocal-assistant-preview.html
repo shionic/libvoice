@@ -1,0 +1,817 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Vocal Assistant — Preview</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg-void:#050507;--bg-base:#0a0a0f;--bg-surface:#0f0f18;--bg-raised:#141420;
+  --bg-overlay:#1a1a28;--bg-hover:#1f1f30;
+  --border-faint:rgba(255,255,255,0.04);--border-subtle:rgba(255,255,255,0.08);
+  --border-dim:rgba(255,255,255,0.14);--border-bright:rgba(255,255,255,0.28);
+  --accent:#00e5ff;--accent-dim:rgba(0,229,255,0.18);--accent-glow:rgba(0,229,255,0.35);--accent-subtle:rgba(0,229,255,0.08);
+  --hit:#00ff88;--hit-dim:rgba(0,255,136,0.18);--hit-glow:rgba(0,255,136,0.35);
+  --warn:#ffb700;--warn-dim:rgba(255,183,0,0.18);
+  --error:#ff4060;--error-dim:rgba(255,64,96,0.18);
+  --note:#7c6bff;--note-dim:rgba(124,107,255,0.22);--note-glow:rgba(124,107,255,0.40);
+  --text-primary:#f0f0f8;--text-secondary:#8888aa;--text-muted:#444460;
+  --font-mono:'Space Mono',monospace;--font-ui:'DM Sans',system-ui,sans-serif;
+  --r-sm:3px;--r-md:6px;--r-lg:10px;
+}
+html,body{width:100%;height:100%;overflow:hidden;background:var(--bg-void);color:var(--text-primary);font-family:var(--font-ui);font-size:14px;-webkit-font-smoothing:antialiased}
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.14);border-radius:2px}
+button{font-family:var(--font-ui);font-size:13px;font-weight:500;cursor:pointer;border:none;border-radius:var(--r-md);padding:8px 14px;transition:all 80ms ease;outline:none;white-space:nowrap;user-select:none}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button:disabled{opacity:.35;cursor:not-allowed}
+.btn-primary{background:var(--accent);color:var(--bg-void);font-weight:600}
+.btn-primary:hover{filter:brightness(1.15);box-shadow:0 0 20px var(--accent-glow)}
+.btn-secondary{background:var(--bg-raised);color:var(--text-primary);border:1px solid var(--border-dim)}
+.btn-secondary:hover:not(:disabled){background:var(--bg-hover);border-color:var(--border-bright)}
+.btn-ghost{background:transparent;color:var(--text-secondary);border:1px solid transparent}
+.btn-ghost:hover:not(:disabled){background:var(--bg-raised);color:var(--text-primary);border-color:var(--border-subtle)}
+.btn-danger{background:var(--error-dim);color:var(--error);border:1px solid rgba(255,64,96,.3)}
+.btn-danger:hover:not(:disabled){background:var(--error);color:#fff}
+input[type=number],input[type=text],select{font-family:var(--font-mono);font-size:13px;background:var(--bg-raised);border:1px solid var(--border-dim);color:var(--text-primary);border-radius:var(--r-sm);padding:5px 9px;outline:none;transition:border-color 80ms ease}
+input:focus,select:focus{border-color:var(--accent)}
+select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23666'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 8px center;padding-right:26px;cursor:pointer}
+select option{background:var(--bg-raised)}
+label{font-size:9px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--text-muted);display:block;margin-bottom:3px}
+.sep{width:1px;background:var(--border-subtle);align-self:stretch}
+.mono{font-family:var(--font-mono)}
+.hidden{display:none!important}
+@keyframes glow-pulse{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes rec-blink{0%,100%{opacity:1;box-shadow:0 0 12px var(--error)}50%{opacity:.5;box-shadow:none}}
+
+/* Layout */
+.app{display:flex;flex-direction:column;width:100%;height:100vh;overflow:hidden}
+
+/* Top bar */
+.topbar{display:flex;align-items:center;height:56px;background:var(--bg-surface);border-bottom:1px solid var(--border-subtle);flex-shrink:0;z-index:30}
+.brand{display:flex;align-items:center;gap:8px;padding:0 20px;height:100%;border-right:1px solid var(--border-subtle);flex-shrink:0;user-select:none}
+.brand-icon{font-size:20px;color:var(--accent);line-height:1;animation:glow-pulse 3s ease-in-out infinite}
+.brand-name{font-family:var(--font-mono);font-size:13px;font-weight:700;letter-spacing:.25em;color:var(--text-primary)}
+
+/* Transport */
+.transport{display:flex;align-items:center;gap:12px;padding:0 20px;height:100%;flex:1;overflow:hidden}
+.t-group{display:flex;align-items:center;gap:8px}
+.t-field{display:flex;flex-direction:column;gap:2px}
+.t-bpm{width:58px;text-align:center;font-size:14px;font-weight:700;padding:4px 6px}
+.t-timesig{width:68px;padding:4px 6px;font-size:12px}
+.t-load{display:flex;align-items:center;gap:6px;padding:6px 12px;font-size:12px}
+.t-load svg{opacity:.7}
+.t-load.loaded{color:var(--accent);border-color:var(--accent-dim);background:var(--accent-subtle)}
+
+.t-rec{display:flex;align-items:center;gap:7px;padding:7px 14px}
+.t-rec svg{flex-shrink:0}
+.t-rec.active{background:var(--error);color:#fff;animation:none}
+.t-rec.active .rec-dot{animation:rec-blink 1s ease-in-out infinite}
+
+.t-play,.t-stop{padding:7px 12px;display:flex;align-items:center}
+.t-timecode{display:flex;flex-direction:column;gap:2px;min-width:110px}
+.t-time{font-size:19px;font-weight:700;color:var(--text-primary);letter-spacing:.04em;line-height:1}
+.t-beat{font-size:10px;color:var(--text-muted);letter-spacing:.06em}
+.t-status{display:flex;align-items:center;gap:7px}
+.t-status-dot{width:7px;height:7px;border-radius:50%;background:var(--text-muted);transition:background .15s}
+.t-status-dot.rec{background:var(--error);animation:glow-pulse 1s ease-in-out infinite}
+.t-status-dot.play{background:var(--hit)}
+.t-status-dot.ready{background:var(--accent)}
+.t-status-label{font-size:12px;color:var(--text-secondary);min-width:72px}
+.t-spacer{flex:1}
+.t-scroll-btn,.t-stats-btn{display:flex;align-items:center;gap:6px;font-size:12px;padding:6px 10px}
+
+/* Content */
+.content{display:flex;flex:1;min-height:0;overflow:hidden}
+
+/* Sidebar */
+.sidebar{width:220px;flex-shrink:0;border-right:1px solid var(--border-subtle);display:flex;flex-direction:column;gap:14px;padding:14px;background:var(--bg-surface);overflow-y:auto}
+
+/* Pitch meter */
+.pm{display:flex;flex-direction:column;gap:9px;padding:14px;background:var(--bg-raised);border:1px solid var(--border-subtle);border-radius:var(--r-lg)}
+.pm-top{display:flex;align-items:center;gap:12px}
+.pm-note-wrap{flex:1}
+.pm-note{font-family:var(--font-mono);font-size:34px;font-weight:700;line-height:1;color:var(--accent);letter-spacing:-.02em;transition:color .08s}
+.pm-note.silent{color:var(--text-muted)}
+.pm-freq{font-size:11px;color:var(--text-secondary);margin-top:4px;font-family:var(--font-mono)}
+.pm-arc-wrap{flex-shrink:0}
+.pm-cents-row{display:flex;align-items:center;gap:8px}
+.pm-cents-lbl{font-size:9px;color:var(--text-muted);letter-spacing:.1em}
+.pm-cents{font-size:13px;font-weight:700;font-family:var(--font-mono);color:var(--text-secondary);min-width:40px;transition:color .08s}
+.pm-cents.in-tune{color:var(--hit)}
+.pm-cents.sharp{color:var(--warn)}
+.pm-cents.flat{color:#7ca8ff}
+.pm-conf{height:3px;background:var(--bg-overlay);border-radius:2px;overflow:hidden}
+.pm-conf-fill{height:100%;background:var(--accent);border-radius:2px;transition:width .1s ease}
+
+/* Sidebar info */
+.sb-info{display:flex;flex-direction:column;gap:10px;padding:12px;background:var(--bg-raised);border-radius:var(--r-md);border:1px solid var(--border-subtle)}
+.sb-info-item{display:flex;flex-direction:column;gap:2px}
+.sb-info-label{font-size:9px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--text-muted)}
+.sb-info-val{font-size:11px;color:var(--text-secondary);font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:190px}
+.sb-legend{display:flex;flex-direction:column;gap:6px;padding:12px;background:var(--bg-raised);border-radius:var(--r-md);border:1px solid var(--border-subtle)}
+.legend-row{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-secondary)}
+.legend-sw{width:22px;height:7px;border-radius:2px;opacity:.8;flex-shrink:0}
+
+/* Main canvas area */
+.main{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden;position:relative;background:var(--bg-void)}
+.canvas-wrapper{flex:1;overflow:auto;position:relative;cursor:grab;outline:none;background:var(--bg-void)}
+.canvas-wrapper:active{cursor:grabbing}
+.canvas-wrapper:focus-visible{box-shadow:inset 0 0 0 2px var(--accent)}
+.canvas-inner{display:flex;position:relative;min-height:100%}
+#label-canvas{position:sticky;left:0;z-index:2;flex-shrink:0;display:block}
+#main-canvas{display:block;flex-shrink:0}
+
+/* Stats panel */
+.stats-panel{width:0;flex-shrink:0;border-left:1px solid var(--border-subtle);background:var(--bg-surface);overflow:hidden;transition:width .25s ease}
+.stats-panel.open{width:340px}
+.stats-inner{padding:20px;min-width:340px}
+.stats-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+.stats-title{font-family:var(--font-mono);font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--text-secondary)}
+.stats-overall{text-align:right;line-height:1}
+.stats-overall-num{font-family:var(--font-mono);font-size:42px;font-weight:700;color:var(--hit);letter-spacing:-.04em}
+.stats-overall-pct{font-size:20px;opacity:.6}
+.stats-overall-lbl{display:block;font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-top:2px}
+.stats-summary{display:flex;gap:20px;padding:12px;background:var(--bg-raised);border-radius:var(--r-md);border:1px solid var(--border-subtle);margin-bottom:16px}
+.s-stat{flex:1;display:flex;flex-direction:column;gap:2px}
+.s-stat-val{font-size:18px;font-weight:700;color:var(--text-primary);line-height:1;font-family:var(--font-mono)}
+.s-stat-lbl{font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em}
+.stats-section-title{font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted);margin-bottom:10px}
+.note-rows{display:flex;flex-direction:column;gap:6px}
+.note-row{display:grid;grid-template-columns:36px 1fr 40px 52px;align-items:center;gap:8px}
+.n-name{font-family:var(--font-mono);font-size:11px;font-weight:700;color:var(--text-secondary);text-align:right}
+.n-bar{height:5px;background:var(--bg-raised);border-radius:3px;overflow:hidden}
+.n-bar-fill{height:100%;border-radius:3px;transition:width .6s cubic-bezier(.16,1,.3,1)}
+.n-pct{font-size:11px;font-weight:700;font-family:var(--font-mono);text-align:right}
+.n-dev{font-size:10px;font-family:var(--font-mono);color:var(--text-muted);text-align:right}
+
+/* Statusbar */
+.statusbar{display:flex;align-items:center;justify-content:space-between;padding:0 20px;height:26px;background:var(--bg-void);border-top:1px solid var(--border-faint);flex-shrink:0}
+.sb-hint{font-size:11px;color:var(--text-muted)}
+.sb-latency{font-size:10px;color:var(--text-muted);font-family:var(--font-mono)}
+</style>
+</head>
+<body>
+<div class="app" role="application" aria-label="Vocal Assistant">
+
+  <!-- Top bar -->
+  <div class="topbar" role="banner">
+    <div class="brand" aria-hidden="true">
+      <span class="brand-icon">◎</span>
+      <span class="brand-name">VOCAL</span>
+    </div>
+    <div class="transport" role="toolbar" aria-label="Transport controls">
+      <!-- File loaders -->
+      <div class="t-group">
+        <button class="btn-secondary t-load" id="btn-midi" aria-label="Load MIDI file">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M2 2h8l4 4v8H2V2z" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M9 2v5h5" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+          MIDI
+        </button>
+        <button class="btn-secondary t-load" id="btn-audio" aria-label="Load audio file">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M2 5h2l3-3v12l-3-3H2V5z" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M11 5.5a4 4 0 010 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          Audio
+        </button>
+      </div>
+      <div class="sep"></div>
+      <!-- BPM + Time Sig -->
+      <div class="t-group" style="gap:16px">
+        <div class="t-field">
+          <label for="bpm">BPM</label>
+          <input id="bpm" class="t-bpm mono" type="number" min="20" max="300" value="100"/>
+        </div>
+        <div class="t-field">
+          <label for="tsig">TIME SIG</label>
+          <select id="tsig" class="t-timesig mono">
+            <option>4/4</option><option>3/4</option><option>2/4</option>
+            <option>6/8</option><option>5/4</option><option>7/8</option>
+          </select>
+        </div>
+      </div>
+      <div class="sep"></div>
+      <!-- Main controls -->
+      <div class="t-group">
+        <button class="btn-danger t-rec" id="btn-rec" aria-label="Start recording" aria-pressed="false">
+          <svg class="rec-dot" width="11" height="11" viewBox="0 0 11 11"><circle cx="5.5" cy="5.5" r="5" fill="currentColor"/></svg>
+          REC
+        </button>
+        <button class="btn-secondary t-play" id="btn-play" aria-label="Play" title="Play">
+          <svg width="13" height="13" viewBox="0 0 14 14"><path d="M3 2l9 5-9 5V2z" fill="currentColor"/></svg>
+        </button>
+        <button class="btn-secondary t-stop" id="btn-stop" aria-label="Stop" title="Stop">
+          <svg width="13" height="13" viewBox="0 0 14 14"><rect x="2" y="2" width="10" height="10" fill="currentColor" rx="1"/></svg>
+        </button>
+      </div>
+      <div class="sep"></div>
+      <!-- Timecode -->
+      <div class="t-timecode">
+        <div id="t-time" class="t-time mono">0:00.000</div>
+        <div id="t-beat" class="t-beat mono">BAR 1 · 1</div>
+      </div>
+      <div class="sep"></div>
+      <!-- Status -->
+      <div class="t-status">
+        <div class="t-status-dot ready" id="status-dot"></div>
+        <span class="t-status-label" id="status-label">Ready</span>
+      </div>
+      <div class="t-spacer"></div>
+      <!-- Scroll + stats -->
+      <div class="t-group">
+        <button class="btn-ghost t-scroll-btn" id="btn-scroll" aria-label="Toggle scroll mode" aria-pressed="true">
+          <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+            <path d="M2 7h8M7 4l3 3-3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <circle cx="2" cy="7" r="1.5" fill="currentColor"/>
+          </svg>
+          Follow
+        </button>
+        <button class="btn-ghost t-stats-btn" id="btn-stats" aria-label="View session statistics">
+          <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><rect x="1" y="7" width="3" height="6" fill="currentColor"/><rect x="5.5" y="4" width="3" height="9" fill="currentColor"/><rect x="10" y="1" width="3" height="12" fill="currentColor"/></svg>
+          Stats
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Content -->
+  <div class="content">
+    <!-- Sidebar -->
+    <aside class="sidebar" aria-label="Pitch monitor">
+      <!-- Pitch meter -->
+      <div class="pm" role="status" aria-label="Current pitch">
+        <div class="pm-top">
+          <div class="pm-note-wrap">
+            <div class="pm-note silent" id="pm-note" aria-live="polite">—</div>
+            <div class="pm-freq mono" id="pm-freq">— Hz</div>
+          </div>
+          <div class="pm-arc-wrap">
+            <canvas id="pm-arc" width="110" height="60" aria-hidden="true"></canvas>
+          </div>
+        </div>
+        <div class="pm-cents-row">
+          <span class="pm-cents-lbl mono">CENTS</span>
+          <span class="pm-cents mono" id="pm-cents">±0</span>
+        </div>
+        <div class="pm-conf"><div class="pm-conf-fill" id="pm-conf" style="width:0%"></div></div>
+      </div>
+
+      <!-- File info -->
+      <div class="sb-info">
+        <div class="sb-info-item">
+          <span class="sb-info-label">MIDI FILE</span>
+          <span class="sb-info-val mono" id="midi-fname">demo-scale.mid</span>
+        </div>
+        <div class="sb-info-item">
+          <span class="sb-info-label">AUDIO FILE</span>
+          <span class="sb-info-val mono" id="audio-fname">—</span>
+        </div>
+        <div class="sb-info-item">
+          <span class="sb-info-label">NOTES</span>
+          <span class="sb-info-val mono" id="note-count">15 notes</span>
+        </div>
+      </div>
+
+      <!-- Legend -->
+      <div class="sb-legend" aria-label="Legend">
+        <div class="legend-row"><div class="legend-sw" style="background:var(--note)"></div>MIDI note</div>
+        <div class="legend-row"><div class="legend-sw" style="background:var(--hit)"></div>Hit note</div>
+        <div class="legend-row"><div class="legend-sw" style="background:var(--warn)"></div>Partial hit</div>
+        <div class="legend-row"><div class="legend-sw" style="background:var(--error)"></div>Missed</div>
+        <div class="legend-row">
+          <div class="legend-sw" style="background:linear-gradient(90deg,var(--accent),transparent)"></div>Your pitch
+        </div>
+      </div>
+    </aside>
+
+    <!-- Canvas -->
+    <main class="main" aria-label="Musical notation">
+      <div class="canvas-wrapper" id="canvas-wrapper" tabindex="0"
+           role="img" aria-label="Pitch visualization timeline">
+        <div class="canvas-inner" id="canvas-inner">
+          <canvas id="label-canvas"></canvas>
+          <canvas id="main-canvas"></canvas>
+        </div>
+      </div>
+    </main>
+
+    <!-- Stats panel -->
+    <div class="stats-panel" id="stats-panel">
+      <div class="stats-inner">
+        <div class="stats-header">
+          <h2 class="stats-title">Session Results</h2>
+          <div class="stats-overall">
+            <span class="stats-overall-num">78<span class="stats-overall-pct">%</span></span>
+            <span class="stats-overall-lbl">Overall Accuracy</span>
+          </div>
+        </div>
+        <div class="stats-summary">
+          <div class="s-stat"><span class="s-stat-val">0:42</span><span class="s-stat-lbl">Duration</span></div>
+          <div class="s-stat"><span class="s-stat-val">1823</span><span class="s-stat-lbl">Pitch frames</span></div>
+          <div class="s-stat"><span class="s-stat-val">15</span><span class="s-stat-lbl">Notes</span></div>
+        </div>
+        <div class="stats-section-title">Per-Note Accuracy</div>
+        <div class="note-rows" id="note-rows"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Statusbar -->
+  <footer class="statusbar">
+    <span class="sb-hint" id="sb-hint">Demo mode active — rendering live pitch visualization</span>
+    <div style="display:flex;gap:16px;align-items:center">
+      <span class="sb-latency mono" id="sb-latency">FFT: 4096pt · 44.1kHz</span>
+      <span class="sb-latency mono">HPS · 5 harmonics</span>
+    </div>
+  </footer>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+// VOCAL ASSISTANT — Full Interactive Preview
+// ═══════════════════════════════════════════════════════
+
+const PITCH_MIN = 36, PITCH_MAX = 84, PITCH_RANGE = 48;
+const LANE_H = 14;
+const PX_PER_MS = 0.22;
+const LABEL_W = 58;
+const CURSOR_X = 280;
+const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+
+const C = {
+  bg:'#0a0a0f', bgLane:'#0c0c16', bgLaneMark:'#0f0f1e',
+  grid:'rgba(255,255,255,0.05)', gridBright:'rgba(255,255,255,0.10)',
+  barLine:'rgba(255,255,255,0.20)', beatLine:'rgba(255,255,255,0.07)',
+  noteBlock:'#7c6bff', noteHit:'#00ff88', noteWarn:'#ffb700', noteErr:'#ff4060',
+  pitchLine:'#00e5ff', pitchDot:'#ffffff',
+  cursor:'rgba(0,229,255,0.60)', cursorBg:'rgba(0,229,255,0.15)',
+  labelBg:'#0a0a0f', labelText:'rgba(255,255,255,0.28)', labelTextC:'rgba(255,255,255,0.55)',
+};
+
+function midiToName(m){return NOTE_NAMES[m%12]+((m/12|0)-1)}
+function midiToFreq(m){return 440*Math.pow(2,(m-69)/12)}
+function freqToMidi(f){return 69+12*Math.log2(f/440)}
+
+// ── State ──
+let state={
+  isRec:false, isPlay:false, scrollMode:'follow',
+  bpm:100, timeSigNum:4, timeSigDen:4,
+  pitchFrames:[], midiData:null,
+  captureMs:0, playbackMs:0, currentBeat:0,
+  statsOpen:false
+};
+let scrollMs=0, targetScrollMs=0;
+let mockT=0, mockMidi=60, mockTrend=0.04;
+let playWall=0, playStartMs=0, playRAF=0;
+
+// ── Generate mock MIDI ──
+function makeMidi(){
+  const bpm=100, beatMs=60000/bpm;
+  const pattern=[60,62,64,65,67,69,71,72,67,65,64,62,60,62,64];
+  const notes=[];
+  for(let i=0;i<pattern.length;i++){
+    const s=i*beatMs*1.5, e=s+beatMs*1.1;
+    notes.push({pitch:pattern[i],start_ms:s,end_ms:e,velocity:75+Math.random()*40|0,channel:0});
+  }
+  return{notes,tempo_bpm:bpm,time_sig_num:4,time_sig_den:4,duration_ms:pattern.length*beatMs*1.5+beatMs};
+}
+
+state.midiData=makeMidi();
+document.getElementById('note-count').textContent=state.midiData.notes.length+' notes';
+
+// ── Canvas setup ──
+const wrapper=document.getElementById('canvas-wrapper');
+const canvasInner=document.getElementById('canvas-inner');
+const mainCanvas=document.getElementById('main-canvas');
+const labelCanvas=document.getElementById('label-canvas');
+const mainCtx=mainCanvas.getContext('2d',{alpha:false});
+const labelCtx=labelCanvas.getContext('2d',{alpha:false});
+const dpr=window.devicePixelRatio||1;
+
+function resizeCanvas(){
+  const totalH=PITCH_RANGE*LANE_H;
+  const w=wrapper.clientWidth-LABEL_W;
+  mainCanvas.width=w*dpr; mainCanvas.height=totalH*dpr;
+  mainCanvas.style.width=w+'px'; mainCanvas.style.height=totalH+'px';
+  mainCtx.scale(dpr,dpr);
+  labelCanvas.width=LABEL_W*dpr; labelCanvas.height=totalH*dpr;
+  labelCanvas.style.width=LABEL_W+'px'; labelCanvas.style.height=totalH+'px';
+  labelCtx.scale(dpr,dpr);
+  renderLabels();
+}
+
+new ResizeObserver(resizeCanvas).observe(wrapper);
+resizeCanvas();
+
+// ── Label rendering ──
+function renderLabels(){
+  const W=LABEL_W, H=PITCH_RANGE*LANE_H;
+  labelCtx.fillStyle=C.labelBg;
+  labelCtx.fillRect(0,0,W,H);
+  for(let midi=PITCH_MIN;midi<=PITCH_MAX;midi++){
+    const y=(PITCH_MAX-midi)*LANE_H;
+    const nc=midi%12, isC=nc===0;
+    if(isC||midi%3===0){
+      labelCtx.font=(isC?'700':'400')+' 10px Space Mono,monospace';
+      labelCtx.fillStyle=isC?C.labelTextC:C.labelText;
+      labelCtx.textAlign='right'; labelCtx.textBaseline='middle';
+      labelCtx.fillText(midiToName(midi),W-8,y+LANE_H/2);
+    }
+    labelCtx.fillStyle=C.grid;
+    labelCtx.fillRect(W-3,y+LANE_H-1,3,1);
+  }
+  labelCtx.fillStyle='rgba(255,255,255,0.08)';
+  labelCtx.fillRect(W-1,0,1,PITCH_RANGE*LANE_H);
+}
+
+// ── Hit cache ──
+const hitCache=new Map();
+
+// ── Main render ──
+function render(){
+  const W=mainCanvas.clientWidth, H=PITCH_RANGE*LANE_H;
+  const ctx=mainCtx;
+  // Lerp scroll
+  scrollMs+=(targetScrollMs-scrollMs)*0.10;
+
+  ctx.fillStyle=C.bg; ctx.fillRect(0,0,W,H);
+  renderLanes(ctx,W,H);
+  renderBarLines(ctx,W,H);
+  renderMidiNotes(ctx,W,H);
+  renderPitchTrace(ctx,W,H);
+  renderCursor(ctx,W,H);
+}
+
+function msToX(ms){return(ms-scrollMs)*PX_PER_MS}
+function midiToY(m){return(PITCH_MAX-m)*LANE_H}
+
+function renderLanes(ctx,W,H){
+  for(let midi=PITCH_MIN;midi<=PITCH_MAX;midi++){
+    const y=midiToY(midi), nc=midi%12;
+    const isC=nc===0, isBlack=[1,3,6,8,10].includes(nc);
+    ctx.fillStyle=isC?C.bgLaneMark:isBlack?C.bg:C.bgLane;
+    ctx.fillRect(0,y,W,LANE_H);
+    ctx.fillStyle=C.grid; ctx.fillRect(0,y+LANE_H-1,W,1);
+  }
+}
+
+function renderBarLines(ctx,W,H){
+  const beatMs=60000/state.bpm, barMs=beatMs*state.timeSigNum;
+  if(barMs<=0)return;
+  const startMs=scrollMs-barMs, endMs=scrollMs+W/PX_PER_MS+barMs;
+  const firstBeat=Math.floor(startMs/beatMs), lastBeat=Math.ceil(endMs/beatMs);
+  for(let b=firstBeat;b<=lastBeat;b++){
+    const x=msToX(b*beatMs);
+    if(x<-10||x>W+10)continue;
+    const isBar=b%state.timeSigNum===0;
+    ctx.strokeStyle=isBar?C.barLine:C.beatLine;
+    ctx.lineWidth=isBar?1.5:0.8;
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke();
+    if(isBar){
+      const bn=Math.floor(b/state.timeSigNum)+1;
+      ctx.fillStyle='rgba(255,255,255,0.20)';
+      ctx.font='600 9px Space Mono,monospace';
+      ctx.textAlign='left'; ctx.fillText(String(bn),x+3,10);
+    }
+  }
+}
+
+function renderMidiNotes(ctx,W,H){
+  if(!state.midiData)return;
+  const nowMs=state.isPlay?state.playbackMs:state.captureMs;
+  const startMs=scrollMs, endMs=startMs+W/PX_PER_MS;
+  state.midiData.notes.forEach((n,i)=>{
+    if(n.end_ms<startMs||n.start_ms>endMs)return;
+    if(n.pitch<PITCH_MIN||n.pitch>PITCH_MAX)return;
+    const x=msToX(n.start_ms), w2=Math.max(2,(n.end_ms-n.start_ms)*PX_PER_MS-1);
+    const y=midiToY(n.pitch)+1, h2=LANE_H-2;
+    const hitPct=hitCache.has(i)?hitCache.get(i):-1;
+    const isPast=n.end_ms<nowMs;
+    let col=C.noteBlock, alpha=isPast?0.38:0.75;
+    if(hitPct>=0&&isPast){
+      if(hitPct>=75){col=C.noteHit;alpha=0.88}
+      else if(hitPct>=40){col=C.noteWarn;alpha=0.80}
+      else{col=C.noteErr;alpha=0.72}
+    }
+    ctx.globalAlpha=alpha;
+    ctx.fillStyle=col;
+    roundRect(ctx,x,y,w2,h2,2); ctx.fill();
+    ctx.globalAlpha=(n.velocity/127)*0.5+0.15;
+    ctx.fillStyle='#fff'; ctx.fillRect(x,y,2,h2);
+    ctx.globalAlpha=1;
+  });
+}
+
+function renderPitchTrace(ctx,W,H){
+  const frames=state.pitchFrames;
+  if(frames.length<2)return;
+  const startMs=scrollMs-500, endMs=scrollMs+W/PX_PER_MS+500;
+  let inSeg=false;
+  ctx.save(); ctx.lineJoin='round'; ctx.lineCap='round';
+  ctx.strokeStyle=C.pitchLine; ctx.lineWidth=2.5;
+  for(let i=0;i<frames.length;i++){
+    const f=frames[i];
+    if(f.f<=0||f.c<0.08){if(inSeg){ctx.stroke();inSeg=false}continue}
+    if(f.t<startMs||f.t>endMs){if(inSeg){ctx.stroke();inSeg=false}continue}
+    const mf=freqToMidi(f.f);
+    if(mf<PITCH_MIN-1||mf>PITCH_MAX+1){if(inSeg){ctx.stroke();inSeg=false}continue}
+    const x=msToX(f.t);
+    const mr=Math.round(mf), frac=mf-mr;
+    const y=midiToY(mr)+LANE_H/2-frac*LANE_H;
+    if(!inSeg){
+      ctx.globalAlpha=Math.min(1,f.c*1.4);
+      ctx.beginPath(); ctx.moveTo(x,y); inSeg=true;
+    } else {
+      const prev=frames[i-1];
+      if(prev&&Math.abs(freqToMidi(f.f)-freqToMidi(prev.f))>3){
+        ctx.stroke(); ctx.beginPath(); ctx.moveTo(x,y);
+      } else ctx.lineTo(x,y);
+    }
+  }
+  if(inSeg)ctx.stroke();
+  // Current dot
+  const last=frames[frames.length-1];
+  if(last&&last.f>0&&last.c>0.08){
+    const x=msToX(last.t), mf=freqToMidi(last.f);
+    const y=midiToY(Math.round(mf))+LANE_H/2;
+    ctx.globalAlpha=1;
+    ctx.shadowColor=C.pitchLine; ctx.shadowBlur=10;
+    ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(x,y,4,0,Math.PI*2); ctx.fill();
+    ctx.shadowBlur=0;
+  }
+  ctx.restore();
+}
+
+function renderCursor(ctx,W,H){
+  if(state.scrollMode!=='follow')return;
+  const x=CURSOR_X;
+  const g=ctx.createLinearGradient(x-50,0,x+1,0);
+  g.addColorStop(0,'transparent'); g.addColorStop(1,C.cursorBg);
+  ctx.fillStyle=g; ctx.fillRect(x-50,0,52,H);
+  ctx.strokeStyle=C.cursor; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke();
+}
+
+function roundRect(ctx,x,y,w,h,r){
+  r=Math.min(r,w/2,h/2);
+  ctx.beginPath();
+  ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+  ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  ctx.lineTo(x+r,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+  ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y); ctx.closePath();
+}
+
+// ── Animation loop ──
+function loop(){
+  requestAnimationFrame(loop);
+  if(state.isPlay){
+    const elapsed=performance.now()-playWall;
+    state.playbackMs=elapsed;
+    state.currentBeat=Math.floor(state.playbackMs/(60000/state.bpm));
+  }
+  if(state.scrollMode==='follow'){
+    const nowMs=state.isPlay?state.playbackMs:state.captureMs;
+    targetScrollMs=Math.max(0,nowMs-CURSOR_X/PX_PER_MS);
+  }
+  render();
+  updateTimecode();
+}
+loop();
+
+// ── Pitch simulation ──
+let pitchInterval;
+function startPitch(){
+  pitchInterval=setInterval(()=>{
+    if(!state.isRec)return;
+    mockT+=0.05; mockMidi+=mockTrend;
+    if(mockMidi>72||mockMidi<52)mockTrend*=-1;
+    const vibrato=Math.sin(mockT*6)*0.5;
+    const noise=(Math.random()-.5)*.25;
+    const m=mockMidi+vibrato+noise;
+    const f=midiToFreq(m), c=0.65+Math.random()*.3;
+    const t=performance.now();
+    const frame={t,f,c,cents:(m-Math.round(m))*100,midiNote:Math.round(m)};
+    state.pitchFrames.push(frame);
+    state.captureMs=t;
+    updateMeter(frame);
+    checkHit(frame);
+  },23);
+}
+
+function checkHit(frame){
+  if(!state.midiData)return;
+  state.midiData.notes.forEach((n,i)=>{
+    if(frame.t>=n.start_ms&&frame.t<=n.end_ms){
+      if(frame.midiNote===n.pitch){
+        const dev=Math.abs(frame.cents);
+        const hp=Math.max(0,100-dev*2);
+        hitCache.set(i,hp);
+      }
+    }
+  });
+}
+
+// ── Pitch Meter ──
+const pmArc=document.getElementById('pm-arc');
+const pmArcCtx=pmArc.getContext('2d');
+let dispCents=0, dispConf=0;
+
+function updateMeter(f){
+  const noteEl=document.getElementById('pm-note');
+  const freqEl=document.getElementById('pm-freq');
+  const centsEl=document.getElementById('pm-cents');
+  const confEl=document.getElementById('pm-conf');
+  if(!f||f.f<=0){
+    noteEl.textContent='—'; noteEl.classList.add('silent');
+    freqEl.textContent='— Hz'; centsEl.textContent='±0';
+    centsEl.className='pm-cents mono'; dispConf+=(-dispConf)*.15;
+    confEl.style.width='0%'; drawArc(0,0); return;
+  }
+  noteEl.classList.remove('silent');
+  noteEl.textContent=midiToName(f.midiNote||Math.round(freqToMidi(f.f)));
+  freqEl.textContent=f.f.toFixed(1)+' Hz';
+  dispCents+=(f.cents-dispCents)*.2;
+  const cs=(dispCents>=0?'+':'')+dispCents.toFixed(0);
+  centsEl.textContent=cs;
+  const a=Math.abs(dispCents);
+  centsEl.className='pm-cents mono '+(a<8?'in-tune':dispCents>0?'sharp':'flat');
+  dispConf+=(f.c-dispConf)*.15;
+  confEl.style.width=Math.min(100,dispConf*100)+'%';
+  drawArc(dispCents,dispConf);
+}
+
+function drawArc(cents,conf){
+  const W=pmArc.width/dpr, H=pmArc.height/dpr;
+  pmArcCtx.clearRect(0,0,pmArc.width,pmArc.height);
+  const cx=W/2, cy=H-6, r=H-14;
+  pmArcCtx.beginPath(); pmArcCtx.arc(cx,cy,r,Math.PI,2*Math.PI);
+  pmArcCtx.strokeStyle='rgba(255,255,255,0.07)'; pmArcCtx.lineWidth=2.5; pmArcCtx.stroke();
+  // Green zone
+  const z=Math.PI*.1;
+  pmArcCtx.beginPath(); pmArcCtx.arc(cx,cy,r,Math.PI+Math.PI/2-z,Math.PI+Math.PI/2+z);
+  pmArcCtx.strokeStyle='rgba(0,255,136,0.22)'; pmArcCtx.lineWidth=2.5; pmArcCtx.stroke();
+  // Ticks
+  for(const tk of[-50,-25,0,25,50]){
+    const ta=Math.PI+Math.PI/2+(tk/50)*(Math.PI/2);
+    const i=r-5, o=r+3;
+    pmArcCtx.beginPath();
+    pmArcCtx.moveTo(cx+i*Math.cos(ta),cy+i*Math.sin(ta));
+    pmArcCtx.lineTo(cx+o*Math.cos(ta),cy+o*Math.sin(ta));
+    pmArcCtx.strokeStyle=tk===0?'rgba(0,255,136,0.4)':'rgba(255,255,255,0.15)';
+    pmArcCtx.lineWidth=tk===0?1.5:0.8; pmArcCtx.stroke();
+  }
+  if(conf>0.05){
+    const t=Math.max(-50,Math.min(50,cents))/50;
+    const angle=Math.PI+Math.PI/2+t*(Math.PI/2);
+    const col=Math.abs(cents)<8?'#00ff88':Math.abs(cents)<25?'#ffb700':'#ff4060';
+    pmArcCtx.beginPath();
+    pmArcCtx.moveTo(cx,cy);
+    pmArcCtx.lineTo(cx+r*Math.cos(angle),cy+r*Math.sin(angle));
+    pmArcCtx.strokeStyle=col; pmArcCtx.lineWidth=2; pmArcCtx.lineCap='round'; pmArcCtx.stroke();
+    pmArcCtx.beginPath(); pmArcCtx.arc(cx,cy,3.5,0,Math.PI*2);
+    pmArcCtx.fillStyle=col; pmArcCtx.fill();
+  }
+}
+
+// ── Timecode ──
+function updateTimecode(){
+  const ms=state.isPlay?state.playbackMs:state.captureMs;
+  const s=ms/1000|0, m=s/60|0, sec=s%60, ms2=ms%1000|0;
+  document.getElementById('t-time').textContent=m+':'+(''+ sec).padStart(2,'0')+'.'+(''+ ms2).padStart(3,'0');
+  const beat=state.currentBeat, bar=Math.floor(beat/state.timeSigNum)+1, bin=beat%state.timeSigNum+1;
+  document.getElementById('t-beat').textContent='BAR '+bar+' · '+bin;
+}
+
+// ── Buttons ──
+document.getElementById('btn-rec').addEventListener('click',()=>{
+  state.isRec=!state.isRec;
+  const btn=document.getElementById('btn-rec');
+  const dot=document.getElementById('status-dot');
+  const lbl=document.getElementById('status-label');
+  if(state.isRec){
+    state.pitchFrames=[]; hitCache.clear();
+    btn.classList.add('active'); btn.setAttribute('aria-pressed','true');
+    dot.className='t-status-dot rec'; lbl.textContent='Recording';
+    document.getElementById('sb-hint').textContent='Recording — sing along with the highlighted notes';
+    startPitch();
+  } else {
+    btn.classList.remove('active'); btn.setAttribute('aria-pressed','false');
+    dot.className='t-status-dot ready'; lbl.textContent='Stopped';
+    document.getElementById('sb-hint').textContent='Recording stopped — scroll freely or press Stats to review';
+    clearInterval(pitchInterval);
+    updateMeter(null);
+    state.scrollMode='free';
+    syncScrollBtn();
+    buildStats();
+  }
+});
+
+document.getElementById('btn-play').addEventListener('click',()=>{
+  state.isPlay=true; state.playbackMs=0;
+  playWall=performance.now(); playStartMs=0;
+  state.scrollMode='follow'; syncScrollBtn();
+  document.getElementById('status-dot').className='t-status-dot play';
+  document.getElementById('status-label').textContent='Playing';
+  if(!state.isRec){state.isRec=true; startPitch()}
+});
+
+document.getElementById('btn-stop').addEventListener('click',()=>{
+  state.isPlay=false; state.isRec=false;
+  clearInterval(pitchInterval); updateMeter(null);
+  document.getElementById('btn-rec').classList.remove('active');
+  document.getElementById('status-dot').className='t-status-dot ready';
+  document.getElementById('status-label').textContent='Stopped';
+  state.scrollMode='free'; syncScrollBtn();
+  buildStats();
+});
+
+document.getElementById('btn-scroll').addEventListener('click',()=>{
+  state.scrollMode=state.scrollMode==='follow'?'free':'follow';
+  syncScrollBtn();
+});
+
+function syncScrollBtn(){
+  const btn=document.getElementById('btn-scroll');
+  const isFollow=state.scrollMode==='follow';
+  btn.textContent=isFollow?'Follow':'Free';
+  btn.setAttribute('aria-pressed',String(isFollow));
+  btn.insertAdjacentHTML('afterbegin',isFollow?
+    '<svg width="13" height="13" viewBox="0 0 14 14" fill="none" style="margin-right:5px"><path d="M2 7h8M7 4l3 3-3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="2" cy="7" r="1.5" fill="currentColor"/></svg>':
+    '<svg width="13" height="13" viewBox="0 0 14 14" fill="none" style="margin-right:5px"><path d="M2 4h10M2 7h10M2 10h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>');
+}
+
+document.getElementById('btn-stats').addEventListener('click',()=>{
+  const p=document.getElementById('stats-panel');
+  if(p.classList.contains('open')){p.classList.remove('open')}
+  else{buildStats();p.classList.add('open')}
+});
+
+document.getElementById('bpm').addEventListener('change',e=>{
+  state.bpm=parseFloat(e.target.value)||100;
+});
+document.getElementById('tsig').addEventListener('change',e=>{
+  const [n,d]=e.target.value.split('/').map(Number);
+  state.timeSigNum=n; state.timeSigDen=d;
+});
+
+// ── Stats ──
+function buildStats(){
+  const rows=document.getElementById('note-rows');
+  const notes=state.midiData?.notes||[];
+  if(!notes.length){rows.innerHTML='<p style="color:var(--text-muted);font-size:12px;padding:8px 0">No MIDI data</p>';return}
+
+  // Compute accuracy per note
+  const acc=notes.map((n,i)=>{
+    const hp=hitCache.has(i)?hitCache.get(i):0;
+    const dev=state.pitchFrames
+      .filter(f=>f.t>=n.start_ms&&f.t<=n.end_ms&&f.midiNote===n.pitch)
+      .map(f=>Math.abs(f.cents));
+    const avgDev=dev.length?dev.reduce((a,b)=>a+b,0)/dev.length:0;
+    return{name:midiToName(n.pitch),hp,avgDev};
+  });
+
+  const overall=acc.reduce((s,a)=>s+a.hp,0)/acc.length||0;
+  document.querySelector('.stats-overall-num').textContent=overall.toFixed(0);
+  document.querySelector('.stats-overall-num').insertAdjacentHTML('beforeend','<span class="stats-overall-pct">%</span>');
+  document.querySelector('.s-stat-val').textContent=formatDur(state.captureMs);
+  const pfCount=state.pitchFrames.filter(f=>f.c>0.1).length;
+  document.querySelectorAll('.s-stat-val')[1].textContent=pfCount;
+
+  rows.innerHTML=acc.map(a=>{
+    const col=a.hp>=75?'var(--hit)':a.hp>=40?'var(--warn)':'var(--error)';
+    return`<div class="note-row">
+      <span class="n-name">${a.name}</span>
+      <div class="n-bar"><div class="n-bar-fill" style="width:${a.hp.toFixed(0)}%;background:${col}"></div></div>
+      <span class="n-pct" style="color:${col}">${a.hp.toFixed(0)}%</span>
+      <span class="n-dev">±${a.avgDev.toFixed(0)}¢</span>
+    </div>`}).join('');
+}
+
+function formatDur(ms){const s=ms/1000|0,m=s/60|0;return m+':'+(''+(s%60)).padStart(2,'0')}
+
+// ── Drag scroll ──
+let dragging=false,dragX=0,dragMs0=0;
+wrapper.addEventListener('mousedown',e=>{if(state.scrollMode!=='free')return;dragging=true;dragX=e.clientX;dragMs0=scrollMs});
+window.addEventListener('mousemove',e=>{if(!dragging)return;const dx=e.clientX-dragX;targetScrollMs=Math.max(0,dragMs0-dx/PX_PER_MS);scrollMs=targetScrollMs});
+window.addEventListener('mouseup',()=>{dragging=false});
+wrapper.addEventListener('wheel',e=>{e.preventDefault();if(state.scrollMode==='follow'){state.scrollMode='free';syncScrollBtn()}targetScrollMs=Math.max(0,targetScrollMs+(e.deltaX+e.deltaY)/PX_PER_MS)},{passive:false});
+
+// ── Keyboard shortcuts ──
+document.addEventListener('keydown',e=>{
+  if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT')return;
+  if(e.code==='Space'){e.preventDefault();document.getElementById('btn-rec').click()}
+  if(e.code==='KeyF'){e.preventDefault();document.getElementById('btn-scroll').click()}
+  if(e.code==='KeyS'&&!e.ctrlKey){e.preventDefault();document.getElementById('btn-stop').click()}
+});
+
+// ── Auto-start demo ──
+setTimeout(()=>{document.getElementById('btn-rec').click()},600);
+document.getElementById('sb-hint').textContent='Press SPACE to toggle recording · F to toggle scroll · S to stop';
+
+// Apply initial stats
+setTimeout(()=>{
+  document.getElementById('btn-stats').click();
+},1200);
+</script>
+</body>
+</html>
