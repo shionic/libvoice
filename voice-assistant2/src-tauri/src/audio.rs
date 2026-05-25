@@ -130,8 +130,8 @@ pub fn start_capture(
             SampleRate(SAMPLE_RATE)
         } else {
             log::warn!("Desired sample rate {} not supported, using {}", 
-                SAMPLE_RATE, supported_config.default_sample_rate().0);
-            supported_config.default_sample_rate()
+                SAMPLE_RATE, supported_config.max_sample_rate().0);
+            supported_config.max_sample_rate()
         };
 
         let channels = supported_config.channels();
