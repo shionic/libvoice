@@ -88,11 +88,59 @@ pub fn start_capture(
             return;
         };
 
-        // Request our preferred config
+        let device_name = device.name().unwrap_or_else(|_| "Unknown".to_string());
+        log::info!("Using audio input device: {}", device_name);
+
+        // Query supported configurations
+        let supported_configs = match device.supported_input_configs() {
+            Ok(configs) => configs,
+            Err(e) => {
+                log::error!("Failed to query supported input configs: {}", e);
+                return;
+            }
+        };
+
+        // Try to find a config that matches our requirements or is close
+        let mut best_config: Option<cpal::SupportedStreamConfigRange> = None;
+        
+        for supported in supported_configs {
+            // Prefer mono, but stereo is acceptable
+            if supported.channels() <= 2 {
+                // Check if our desired sample rate is supported
+                if supported.min_sample_rate().0 <= SAMPLE_RATE 
+                    && supported.max_sample_rate().0 >= SAMPLE_RATE {
+                    best_config = Some(supported);
+                    break;
+                }
+                // Fallback: keep any config we find
+                if best_config.is_none() {
+                    best_config = Some(supported);
+                }
+            }
+        }
+
+        let Some(supported_config) = best_config else {
+            log::error!("No suitable audio input configuration found");
+            return;
+        };
+
+        // Build config from supported range
+        let sample_rate = if supported_config.min_sample_rate().0 <= SAMPLE_RATE 
+            && supported_config.max_sample_rate().0 >= SAMPLE_RATE {
+            SampleRate(SAMPLE_RATE)
+        } else {
+            log::warn!("Desired sample rate {} not supported, using {}", 
+                SAMPLE_RATE, supported_config.default_sample_rate().0);
+            supported_config.default_sample_rate()
+        };
+
+        let channels = supported_config.channels();
+        log::info!("Audio config: {} Hz, {} channel(s)", sample_rate.0, channels);
+
         let config = StreamConfig {
-            channels: 1,
-            sample_rate: SampleRate(SAMPLE_RATE),
-            buffer_size: cpal::BufferSize::Fixed(HOP_SIZE as u32),
+            channels,
+            sample_rate,
+            buffer_size: cpal::BufferSize::Default, // Let the system choose
         };
 
         let ring = Arc::new(Mutex::new(RingBuffer::new(FFT_SIZE * 4)));
@@ -104,8 +152,17 @@ pub fn start_capture(
         let stream = match device.build_input_stream(
             &config,
             move |data: &[f32], _: &_| {
-                ring_writer.lock().push_slice(data);
-                let _ = chunk_tx.try_send(data.to_vec());
+                // If stereo, convert to mono by averaging channels
+                if channels == 2 {
+                    let mono: Vec<f32> = data.chunks_exact(2)
+                        .map(|frame| (frame[0] + frame[1]) / 2.0)
+                        .collect();
+                    ring_writer.lock().push_slice(&mono);
+                    let _ = chunk_tx.try_send(mono);
+                } else {
+                    ring_writer.lock().push_slice(data);
+                    let _ = chunk_tx.try_send(data.to_vec());
+                }
             },
             |err| log::error!("Audio stream error: {}", err),
             None,

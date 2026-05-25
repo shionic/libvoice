@@ -12,6 +12,43 @@ pub fn run() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
         std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
     }
+    
+    // Initialize logging with file output for Windows GUI mode
+    #[cfg(target_os = "windows")]
+    {
+        use std::fs::OpenOptions;
+        use env_logger::Builder;
+        use std::io::Write;
+        
+        // Try to create log file in temp directory
+        if let Ok(log_file) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(std::env::temp_dir().join("vocal-assistant.log"))
+        {
+            Builder::from_default_env()
+                .target(env_logger::Target::Pipe(Box::new(log_file)))
+                .filter_level(log::LevelFilter::Info)
+                .format(|buf, record| {
+                    writeln!(
+                        buf,
+                        "{} [{}] {}",
+                        chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+                        record.level(),
+                        record.args()
+                    )
+                })
+                .init();
+            
+            log::info!("Vocal Assistant started - logging to {}", 
+                std::env::temp_dir().join("vocal-assistant.log").display());
+        } else {
+            // Fallback to default if file creation fails
+            env_logger::init();
+        }
+    }
+    
+    #[cfg(not(target_os = "windows"))]
     env_logger::init();
 
     tauri::Builder::default()
