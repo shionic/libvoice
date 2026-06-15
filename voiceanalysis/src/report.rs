@@ -80,7 +80,10 @@ pub fn format_report(
         writeln!(
             &mut out,
             "<pre>{}</pre>",
-            escape_html(&format_harmonics_section(overall.harmonics.as_ref()))
+            escape_html(&format_harmonics_section(
+                overall.harmonics.as_ref(),
+                &report.frames
+            ))
         )
         .unwrap();
         printed_section = true;
@@ -94,7 +97,7 @@ pub fn format_report(
     writeln!(&mut out).unwrap();
     writeln!(
         &mut out,
-        "<i>Tip:</i> <code>+energy</code>, <code>+harmonics</code>, and <code>+spectrum</code> add more detail. Use <code>-feature</code> to hide a section."
+        "<i>Tip:</i> <code>+hnr</code>, <code>+spectral</code>, and <code>+energy</code> add more detail. Use <code>-feature</code> to hide a section."
     )
     .unwrap();
 
@@ -159,7 +162,10 @@ fn format_spectral_section(spectral: Option<&SpectralSummary>) -> String {
     .join("\n\n")
 }
 
-fn format_harmonics_section(harmonics: Option<&HarmonicSummary>) -> String {
+fn format_harmonics_section(
+    harmonics: Option<&HarmonicSummary>,
+    frames: &[libvoice::FrameAnalysis],
+) -> String {
     let Some(harmonics) = harmonics else {
         return "harmonics: unavailable".to_string();
     };
@@ -169,6 +175,18 @@ fn format_harmonics_section(harmonics: Option<&HarmonicSummary>) -> String {
         "normalized  : F0 = 1\nmax range   : {} Hz",
         format_value(harmonics.max_frequency_hz)
     ));
+    match summarize_harmonic_stack(frames) {
+        Some(stack) => lines.push(format!(
+            "total H2+   : {} frames\nmean        : {}\nmedian      : {}\np5..p95     : {} .. {}\nhigh point  : {}",
+            stack.count,
+            format_value(stack.mean),
+            format_value(stack.median),
+            format_value(stack.p5),
+            format_value(stack.p95),
+            format_value(stack.max)
+        )),
+        None => lines.push("total H2+   : unavailable".to_string()),
+    }
     for harmonic in harmonics.harmonics.iter().take(10) {
         lines.push(format!(
             "h{:02} mean    : {}\nh{:02} std     : {}\nh{:02} p5..p95 : {} .. {}",
@@ -188,6 +206,72 @@ fn format_harmonics_section(harmonics: Option<&HarmonicSummary>) -> String {
         ));
     }
     lines.join("\n\n")
+}
+
+fn summarize_harmonic_stack(frames: &[libvoice::FrameAnalysis]) -> Option<SummaryStats> {
+    summarize_values(
+        frames
+            .iter()
+            .filter(|frame| frame.pitch_hz.is_some())
+            .map(|frame| {
+                frame
+                    .harmonic_strengths
+                    .iter()
+                    .skip(1)
+                    .filter_map(|value| *value)
+                    .sum::<f32>()
+            })
+            .filter(|value| value.is_finite())
+            .collect(),
+    )
+}
+
+fn summarize_values(mut values: Vec<f32>) -> Option<SummaryStats> {
+    if values.is_empty() {
+        return None;
+    }
+
+    values.sort_unstable_by(|a, b| a.total_cmp(b));
+    let count = values.len();
+    let mean = values.iter().sum::<f32>() / count as f32;
+    let variance = values
+        .iter()
+        .map(|value| {
+            let delta = *value - mean;
+            delta * delta
+        })
+        .sum::<f32>()
+        / (count as f32 - 1.0).max(1.0);
+
+    Some(SummaryStats {
+        count,
+        mean,
+        std: variance.sqrt(),
+        median: percentile_sorted(&values, 0.5),
+        min: values[0],
+        max: values[count - 1],
+        p5: percentile_sorted(&values, 0.05),
+        p95: percentile_sorted(&values, 0.95),
+    })
+}
+
+fn percentile_sorted(values: &[f32], percentile: f32) -> f32 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    if values.len() == 1 {
+        return values[0];
+    }
+
+    let position = percentile.clamp(0.0, 1.0) * (values.len() - 1) as f32;
+    let lower = position.floor() as usize;
+    let upper = position.ceil() as usize;
+    if lower == upper {
+        return values[lower];
+    }
+
+    let weight = position - lower as f32;
+    values[lower] * (1.0 - weight) + values[upper] * weight
 }
 
 fn format_stats_block(label: &str, stats: Option<&SummaryStats>, unit: Option<&str>) -> String {

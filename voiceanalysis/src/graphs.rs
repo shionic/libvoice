@@ -4,6 +4,8 @@ use libvoice::{AnalysisReport, FrameAnalysis};
 use plotters::coord::types::RangedCoordf32;
 use plotters::prelude::*;
 
+use crate::options::AnalyzeOptions;
+
 const WIDTH: u32 = 2560;
 const HEIGHT: u32 = 1440;
 type Chart2d<'a, 'b> =
@@ -22,7 +24,10 @@ fn spectrum_display_max_hz(report: &AnalysisReport, spectrum: &libvoice::FftSpec
     report.config.max_harmonic_frequency_hz.min(nyquist_hz)
 }
 
-pub fn generate_graphs(report: &AnalysisReport) -> Result<Vec<GraphImage>, String> {
+pub fn generate_graphs(
+    report: &AnalysisReport,
+    options: &AnalyzeOptions,
+) -> Result<Vec<GraphImage>, String> {
     let frames = &report.frames;
     if frames.is_empty() {
         return Ok(Vec::new());
@@ -30,20 +35,28 @@ pub fn generate_graphs(report: &AnalysisReport) -> Result<Vec<GraphImage>, Strin
 
     let mut graphs = Vec::new();
 
-    if let Some(graph) = build_pitch_graph(frames)? {
-        graphs.push(graph);
+    if options.pitch {
+        if let Some(graph) = build_pitch_graph(frames)? {
+            graphs.push(graph);
+        }
     }
-    if let Some(graph) = build_harmonics_graph(report)? {
-        graphs.push(graph);
+    if options.harmonics {
+        if let Some(graph) = build_harmonics_graph(report)? {
+            graphs.push(graph);
+        }
     }
-    if let Some(graph) = build_hnr_loudness_graph(frames)? {
-        graphs.push(graph);
+    if options.hnr {
+        if let Some(graph) = build_hnr_loudness_graph(frames)? {
+            graphs.push(graph);
+        }
     }
-    if let Some(graph) = build_tilt_graph(frames)? {
-        graphs.push(graph);
-    }
-    if let Some(graph) = build_spectral_graph(frames)? {
-        graphs.push(graph);
+    if options.spectral {
+        if let Some(graph) = build_tilt_graph(frames)? {
+            graphs.push(graph);
+        }
+        if let Some(graph) = build_spectral_graph(frames)? {
+            graphs.push(graph);
+        }
     }
 
     Ok(graphs)
@@ -86,7 +99,7 @@ pub fn build_spectrum_graph(report: &AnalysisReport) -> Result<Option<GraphImage
             .last()
             .map(|frame| frame.end_seconds)
             .unwrap_or(0.01);
-    
+
     // Logarithmic Y-axis range
     let y_range = (min_display_hz..max_hz).log_scale();
 
@@ -131,7 +144,7 @@ pub fn build_spectrum_graph(report: &AnalysisReport) -> Result<Option<GraphImage
             for bin in 1..=top_bin {
                 let lower_hz = (bin - 1) as f32 * spectrum.bin_hz;
                 let upper_hz = bin as f32 * spectrum.bin_hz;
-                
+
                 // Clip to display range
                 if upper_hz < min_display_hz {
                     continue;
@@ -139,9 +152,10 @@ pub fn build_spectrum_graph(report: &AnalysisReport) -> Result<Option<GraphImage
                 let draw_lower_hz = lower_hz.max(min_display_hz);
 
                 let db = 20.0 * frame.magnitudes[bin].max(1.0e-12).log10();
-                let normalized = ((db - peak_db + dynamic_range_db) / dynamic_range_db).clamp(0.0, 1.0);
+                let normalized =
+                    ((db - peak_db + dynamic_range_db) / dynamic_range_db).clamp(0.0, 1.0);
                 let color = spectrogram_color(normalized, frame.is_voiced);
-                
+
                 chart
                     .draw_series(std::iter::once(Rectangle::new(
                         [
@@ -204,10 +218,12 @@ pub fn build_spectrum_graph(report: &AnalysisReport) -> Result<Option<GraphImage
             let db_lower = -dynamic_range_db + n_lower * dynamic_range_db;
             let db_upper = -dynamic_range_db + n_upper * dynamic_range_db;
             let color = spectrogram_color(n_lower, true);
-            colorbar_chart.draw_series(std::iter::once(Rectangle::new(
-                [(0.0, db_lower), (1.0, db_upper)],
-                color.filled(),
-            ))).map_err(draw_err)?;
+            colorbar_chart
+                .draw_series(std::iter::once(Rectangle::new(
+                    [(0.0, db_lower), (1.0, db_upper)],
+                    color.filled(),
+                )))
+                .map_err(draw_err)?;
         }
 
         root.present().map_err(draw_err)?;

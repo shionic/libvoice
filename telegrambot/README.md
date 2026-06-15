@@ -30,15 +30,15 @@ Re-upload a voice message or audio file as a Telegram voice note with:
 Default features:
 
 ```text
-+pitch +hnr +spectral +graph
++pitch +harmonics +graph +spectrum
 ```
 
 Enable or disable features explicitly:
 
 ```text
 /analyze +formants
-/analyze +energy -spectral
-/analyze +spectrum
+/analyze +energy -spectrum
+/analyze +hnr +spectral
 /analyze +all
 /analyze -all +pitch +hnr
 ```

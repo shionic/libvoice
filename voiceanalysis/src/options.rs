@@ -33,11 +33,11 @@ impl Default for AnalyzeOptions {
     fn default() -> Self {
         Self {
             pitch: true,
-            hnr: true,
-            spectral: true,
-            spectrum: false,
+            hnr: false,
+            spectral: false,
+            spectrum: true,
             energy: false,
-            harmonics: false,
+            harmonics: true,
             high_pitch_mode: false,
             graph: true,
             clip: None,
@@ -152,7 +152,7 @@ pub fn parse_analyze_options(text: &str) -> Result<AnalyzeOptions, String> {
 }
 
 pub fn analyze_usage_hint() -> &'static str {
-    "Reply to a voice message or audio file with <code>/analyze</code>.\nDefault sections: <code>+pitch +hnr +spectral +graph</code>\nExtra features: <code>+harmonics +energy +spectrum +high-pitch</code>\nClip syntax: <code>+from 20s +to 1m40s</code> or <code>+from 20s +dur 20s</code>\nExample: <code>/analyze +high-pitch +spectrum +from 20s +dur 20s -spectral</code>"
+    "Reply to a voice message or audio file with <code>/analyze</code>.\nDefault sections: <code>+pitch +harmonics +graph +spectrum</code>\nExtra features: <code>+hnr +spectral +energy +high-pitch</code>\nClip syntax: <code>+from 20s +to 1m40s</code> or <code>+from 20s +dur 20s</code>\nExample: <code>/analyze +high-pitch +from 20s +dur 20s -spectrum</code>"
 }
 
 impl ClipSpec {
@@ -248,12 +248,21 @@ fn format_time_seconds(seconds: f32) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ClipEnd, parse_analyze_options};
+    use super::{parse_analyze_options, ClipEnd};
 
     #[test]
     fn enables_graph_by_default() {
         let options = parse_analyze_options("/analyze").unwrap();
         assert!(options.graph);
+    }
+
+    #[test]
+    fn enables_spectrum_and_harmonics_by_default_without_hnr_or_spectral_text() {
+        let options = parse_analyze_options("/analyze").unwrap();
+        assert!(options.spectrum);
+        assert!(options.harmonics);
+        assert!(!options.hnr);
+        assert!(!options.spectral);
     }
 
     #[test]

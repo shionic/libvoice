@@ -4,13 +4,13 @@ mod options;
 mod report;
 
 pub use audio::{
-    DecodedAudio, analyze_samples, audio_duration_seconds, clip_audio_seconds, decode_audio_bytes,
+    analyze_samples, audio_duration_seconds, clip_audio_seconds, decode_audio_bytes, DecodedAudio,
 };
 pub use graphs::{
-    GraphImage, build_spectrum_feature_graphs, build_spectrum_graph, generate_graphs,
+    build_spectrum_feature_graphs, build_spectrum_graph, generate_graphs, GraphImage,
 };
 pub use options::{
-    AnalyzeOptions, ClipEnd, ClipSpec, ResolvedClip, analyze_usage_hint, parse_analyze_options,
+    analyze_usage_hint, parse_analyze_options, AnalyzeOptions, ClipEnd, ClipSpec, ResolvedClip,
 };
 pub use report::format_report;
 
@@ -45,7 +45,7 @@ pub fn analyze_audio_bytes(
     let report_label = format_report_label(label, resolved_clip.as_ref());
     let report_text = format_report(&report_label, &analysis_audio, &report, options);
     let mut graphs = if options.graph {
-        generate_graphs(&report)?
+        generate_graphs(&report, options)?
     } else {
         Vec::new()
     };
