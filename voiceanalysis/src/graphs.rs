@@ -24,7 +24,34 @@ fn spectrum_display_max_hz(report: &AnalysisReport, spectrum: &libvoice::FftSpec
     report.config.max_harmonic_frequency_hz.min(nyquist_hz)
 }
 
-pub fn generate_graphs(
+pub fn generate_graphs(report: &AnalysisReport) -> Result<Vec<GraphImage>, String> {
+    let frames = &report.frames;
+    if frames.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut graphs = Vec::new();
+
+    if let Some(graph) = build_pitch_graph(frames)? {
+        graphs.push(graph);
+    }
+    if let Some(graph) = build_harmonics_graph(report)? {
+        graphs.push(graph);
+    }
+    if let Some(graph) = build_hnr_loudness_graph(frames)? {
+        graphs.push(graph);
+    }
+    if let Some(graph) = build_tilt_graph(frames)? {
+        graphs.push(graph);
+    }
+    if let Some(graph) = build_spectral_graph(frames)? {
+        graphs.push(graph);
+    }
+
+    Ok(graphs)
+}
+
+pub fn generate_selected_graphs(
     report: &AnalysisReport,
     options: &AnalyzeOptions,
 ) -> Result<Vec<GraphImage>, String> {

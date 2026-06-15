@@ -7,7 +7,8 @@ pub use audio::{
     analyze_samples, audio_duration_seconds, clip_audio_seconds, decode_audio_bytes, DecodedAudio,
 };
 pub use graphs::{
-    build_spectrum_feature_graphs, build_spectrum_graph, generate_graphs, GraphImage,
+    build_spectrum_feature_graphs, build_spectrum_graph, generate_graphs, generate_selected_graphs,
+    GraphImage,
 };
 pub use options::{
     analyze_usage_hint, parse_analyze_options, AnalyzeOptions, ClipEnd, ClipSpec, ResolvedClip,
@@ -45,7 +46,7 @@ pub fn analyze_audio_bytes(
     let report_label = format_report_label(label, resolved_clip.as_ref());
     let report_text = format_report(&report_label, &analysis_audio, &report, options);
     let mut graphs = if options.graph {
-        generate_graphs(&report, options)?
+        generate_selected_graphs(&report, options)?
     } else {
         Vec::new()
     };
