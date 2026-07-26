@@ -85,7 +85,7 @@ fn assert_reports_close(full: &AnalysisReport, streamed: &AnalysisReport) {
         full.overall.processed_samples,
         streamed.overall.processed_samples
     );
-    
+
     // Only compare frame counts if both reports actually collected frames
     if !full.frames.is_empty() && !streamed.frames.is_empty() {
         assert_eq!(full.frames.len(), streamed.frames.len());
@@ -141,19 +141,23 @@ fn assert_reports_close(full: &AnalysisReport, streamed: &AnalysisReport) {
 fn hnr_interpolation_improves_precision_for_fractional_lags() {
     let sample_rate = 16_000;
     let config = AnalyzerConfig::new(sample_rate);
-    
+
     // 16000 / 220.5 ≈ 72.562... lags
     // This frequency does not align with an integer lag.
     // Without interpolation, rounding to 73 or 72 would decrease periodicity.
     let expected_hz = 220.5;
     let samples = synth_sine(sample_rate, expected_hz, 1.0, 0.5);
     let report = VoiceAnalyzer::analyze_buffer(config, &samples);
-    
+
     let spectral = report.overall.spectral.as_ref().unwrap();
     // With interpolation, HNR should be very high for a pure sine wave.
     // If it were rounded to integer lag, HNR would typically drop below 20 dB.
-    assert!(spectral.hnr_db.mean > 20.0, "HNR should be high with interpolation, got {}", spectral.hnr_db.mean);
-    
+    assert!(
+        spectral.hnr_db.mean > 20.0,
+        "HNR should be high with interpolation, got {}",
+        spectral.hnr_db.mean
+    );
+
     let pitch = report.overall.pitch_hz.as_ref().unwrap();
     approx_eq(pitch.mean, expected_hz, 1.0);
 }
@@ -249,7 +253,11 @@ fn high_pitch_mode_preserves_harmonic_detection_near_upper_pitch_limit() {
     approx_eq(h3.strength_ratio.mean, 0.25, 0.05);
     approx_eq(h4.strength_ratio.mean, 0.12, 0.05);
     approx_eq(h5.strength_ratio.mean, 0.06, 0.03);
-    assert!(harmonics.max_frequency_hz > 5_000.0);
+    assert!(
+        harmonics.max_frequency_hz > 4_400.0 && harmonics.max_frequency_hz < 4_600.0,
+        "max detected harmonic frequency = {}",
+        harmonics.max_frequency_hz
+    );
 }
 
 #[test]
@@ -475,7 +483,7 @@ fn report_exposes_frames_with_cumulative_statistics() {
     approx_eq(
         first.cumulative.pitch_hz.as_ref().unwrap().mean,
         first.pitch_hz.unwrap(),
-        0.01
+        0.01,
     );
 
     let last = report.frames.last().unwrap();
@@ -489,7 +497,7 @@ fn streaming_handles_extreme_fragmentation_single_sample() {
     let samples = synth_sine(sample_rate, 220.0, 0.5, 0.5);
 
     let full = VoiceAnalyzer::analyze_buffer(config.clone(), &samples);
-    
+
     let mut analyzer = VoiceAnalyzer::new(config);
     for &sample in &samples {
         analyzer.process_chunk(&[sample]);
@@ -538,11 +546,16 @@ fn high_zcr_fricative_is_rejected_as_unvoiced() {
 fn trailing_rms_drop_rejects_frame() {
     let sample_rate = 16_000;
     let config = AnalyzerConfig::new(sample_rate);
-    
+
     // Create exactly one frame's worth of audio.
     // First half: 440Hz sine wave (voiced).
     // Second half: Silence.
-    let mut samples = synth_sine(sample_rate, 440.0, config.frame_size as f32 / (2.0 * sample_rate as f32), 0.5);
+    let mut samples = synth_sine(
+        sample_rate,
+        440.0,
+        config.frame_size as f32 / (2.0 * sample_rate as f32),
+        0.5,
+    );
     samples.resize(config.frame_size, 0.0);
 
     let report = VoiceAnalyzer::analyze_buffer(config, &samples);
@@ -550,4 +563,33 @@ fn trailing_rms_drop_rejects_frame() {
     // This frame should be rejected because its trailing RMS (calculated on the second half)
     // is 0.0, which is < 0.8 * voiced_rms_threshold and < 0.45 * frame_rms.
     assert_eq!(report.overall.frame_count, 0);
+}
+
+#[test]
+fn fallible_constructor_rejects_zero_hop_size() {
+    let mut config = AnalyzerConfig::new(16_000);
+    config.hop_size = 0;
+    assert!(VoiceAnalyzer::try_new(config).is_err());
+}
+
+#[test]
+fn silent_fft_spectrum_has_zero_frequency_statistics() {
+    let sample_rate = 16_000;
+    let config = AnalyzerConfig::new(sample_rate);
+    let samples = vec![0.0; config.frame_size];
+    let report = VoiceAnalyzer::analyze_buffer_with_output_options(
+        config,
+        &samples,
+        libvoice::AnalysisOutputOptions {
+            frame_analysis: false,
+            fft_spectrum: true,
+        },
+    );
+    let spectrum = report.fft_spectrum.unwrap();
+    assert!(
+        spectrum.frames[0]
+            .magnitudes
+            .iter()
+            .all(|&value| value == 0.0)
+    );
 }

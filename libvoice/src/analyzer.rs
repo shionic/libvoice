@@ -1,11 +1,11 @@
-use crate::config::AnalyzerConfig;
+use crate::config::{AnalyzerConfig, ConfigError};
 use crate::model::{
     AnalysisReport, ChunkAnalysis, FftSpectrum, FftSpectrumFrame, FrameAnalysis, FrameFeatures,
     OverallAnalysis,
 };
 use crate::signal::hann_window;
 use crate::spectral::FrameAnalyzer;
-use crate::summary::{summarize_chunk, IncrementalSummarizer};
+use crate::summary::{IncrementalSummarizer, summarize_chunk};
 
 #[derive(Debug, Clone)]
 pub struct AnalysisOutputOptions {
@@ -31,26 +31,40 @@ pub struct VoiceAnalyzer {
     processed_samples: usize,
     next_chunk_index: usize,
     next_frame_index: usize,
-    overall_frames: Vec<FrameFeatures>,
+    voiced_frame_count: usize,
     incremental_summarizer: IncrementalSummarizer,
     fft_spectrum_frames: Option<Vec<FftSpectrumFrame>>,
 }
 
 impl VoiceAnalyzer {
     pub fn new(config: AnalyzerConfig) -> Self {
-        Self::new_with_output_options(config, AnalysisOutputOptions::default())
+        Self::try_new(config).expect("invalid analyzer configuration")
+    }
+
+    pub fn try_new(config: AnalyzerConfig) -> Result<Self, ConfigError> {
+        Self::try_new_with_output_options(config, AnalysisOutputOptions::default())
     }
 
     pub fn new_with_output_options(
         config: AnalyzerConfig,
         output_options: AnalysisOutputOptions,
     ) -> Self {
+        Self::try_new_with_output_options(config, output_options)
+            .expect("invalid analyzer configuration")
+    }
+
+    pub fn try_new_with_output_options(
+        config: AnalyzerConfig,
+        output_options: AnalysisOutputOptions,
+    ) -> Result<Self, ConfigError> {
+        config.validate()?;
         let window = hann_window(config.frame_size);
         let frame_analyzer = FrameAnalyzer::new(config.clone(), window);
         let fft_spectrum_frames = output_options.fft_spectrum.then(Vec::new);
         let pending_capacity = config.frame_size + config.hop_size;
+        let hop_size = config.hop_size;
 
-        Self {
+        Ok(Self {
             config,
             output_options,
             frame_analyzer,
@@ -59,10 +73,10 @@ impl VoiceAnalyzer {
             processed_samples: 0,
             next_chunk_index: 0,
             next_frame_index: 0,
-            overall_frames: Vec::with_capacity(32),
-            incremental_summarizer: IncrementalSummarizer::new(),
+            voiced_frame_count: 0,
+            incremental_summarizer: IncrementalSummarizer::new(hop_size),
             fft_spectrum_frames,
-        }
+        })
     }
 
     pub fn config(&self) -> &AnalyzerConfig {
@@ -89,19 +103,19 @@ impl VoiceAnalyzer {
                 self.processed_samples - self.pending.len() + self.pending_start;
             let frame =
                 &self.pending[self.pending_start..self.pending_start + self.config.frame_size];
-            let features = self.frame_analyzer.analyze(frame);
+            let features = self.frame_analyzer.analyze(frame, frame_start_sample);
             self.pending_start += self.config.hop_size;
             let is_voiced = self.is_voiced_frame(&features);
             self.capture_fft_spectrum(frame_start_sample, is_voiced);
             if is_voiced {
                 frame_features.push(features.clone());
-                self.overall_frames.push(features.clone());
+                self.voiced_frame_count += 1;
                 self.incremental_summarizer.add_frame(&features);
 
                 if self.output_options.frame_analysis {
                     let cumulative = self.incremental_summarizer.summarize(
                         frame_start_sample + self.config.frame_size,
-                        self.overall_frames.len(),
+                        self.voiced_frame_count,
                     );
                     frames.push(self.build_frame_analysis(
                         frame_start_sample,
@@ -121,7 +135,7 @@ impl VoiceAnalyzer {
             self.next_chunk_index,
             samples.len(),
             &frame_features,
-            self.config.frame_step_seconds(),
+            self.config.hop_size,
         );
         self.next_chunk_index += 1;
         (chunk, frames)
@@ -129,7 +143,7 @@ impl VoiceAnalyzer {
 
     pub fn finalize(&self) -> OverallAnalysis {
         self.incremental_summarizer
-            .summarize(self.processed_samples, self.overall_frames.len())
+            .summarize(self.processed_samples, self.voiced_frame_count)
     }
 
     pub fn analyze_buffer(config: AnalyzerConfig, samples: &[f32]) -> AnalysisReport {
@@ -207,7 +221,6 @@ impl VoiceAnalyzer {
             return;
         }
 
-        self.overall_frames.reserve(additional_frames);
         if let Some(fft_spectrum_frames) = self.fft_spectrum_frames.as_mut() {
             fft_spectrum_frames.reserve(additional_frames);
         }

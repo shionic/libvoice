@@ -62,7 +62,7 @@ impl FrameAnalyzer {
         }
     }
 
-    pub(crate) fn analyze(&mut self, frame: &[f32]) -> FrameFeatures {
+    pub(crate) fn analyze(&mut self, frame: &[f32], start_sample: usize) -> FrameFeatures {
         debug_assert_eq!(frame.len(), self.config.frame_size);
 
         let mut energy_sum = 0.0_f32;
@@ -112,16 +112,16 @@ impl FrameAnalyzer {
         let mut weighted_sum = 0.0_f32;
         let mut power_sum = 0.0_f32;
         let mut log_sum = 0.0_f32;
-        let mut rolloff_hz = 0.0_f32;
+        let mut rolloff_hz = None;
         for (index, bin) in self.fft_output.iter().enumerate() {
-            let power = bin.re.mul_add(bin.re, bin.im * bin.im).max(1.0e-24);
+            let power = bin.re.mul_add(bin.re, bin.im * bin.im);
             let magnitude = power.sqrt();
             self.magnitudes[index] = magnitude;
             let hz = self.hz_by_bin[index];
             magnitude_sum += magnitude;
             power_sum += power;
             weighted_sum += hz * magnitude;
-            log_sum += power.ln();
+            log_sum += power.max(1.0e-24).ln();
         }
 
         let centroid = if magnitude_sum > 0.0 {
@@ -139,8 +139,8 @@ impl FrameAnalyzer {
             let power = magnitude * magnitude;
             bandwidth_sum += magnitude * diff * diff;
             cumulative += power;
-            if rolloff_hz == 0.0 && cumulative >= threshold {
-                rolloff_hz = hz;
+            if rolloff_hz.is_none() && cumulative >= threshold {
+                rolloff_hz = Some(hz);
             }
         }
 
@@ -182,13 +182,10 @@ impl FrameAnalyzer {
             self.config.harmonic_min_strength_ratio,
         );
         FrameFeatures {
+            start_sample,
             pitch_hz,
             pitch_clarity: pitch.map(|estimate| estimate.clarity).unwrap_or(0.0),
-            spectral_rolloff_hz: if rolloff_hz > 0.0 {
-                rolloff_hz
-            } else {
-                self.fft_output.len().saturating_sub(1) as f32 * self.bin_hz
-            },
+            spectral_rolloff_hz: rolloff_hz.unwrap_or(0.0),
             spectral_centroid_hz: centroid,
             spectral_bandwidth_hz: bandwidth,
             spectral_flatness: flatness,

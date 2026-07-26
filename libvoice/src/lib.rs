@@ -9,7 +9,7 @@ mod summary;
 
 pub use analyzer::AnalysisOutputOptions;
 pub use analyzer::VoiceAnalyzer;
-pub use config::AnalyzerConfig;
+pub use config::{AnalyzerConfig, ConfigError};
 pub use model::{
     AnalysisReport, ChunkAnalysis, FftSpectrum, FftSpectrumFrame, FrameAnalysis, HarmonicStats,
     HarmonicSummary, JitterMetrics, OverallAnalysis, SpectralSummary, SummaryStats,
@@ -129,14 +129,14 @@ mod tests {
     fn incremental_summarization_matches_batch_calculation() {
         use crate::analyzer::VoiceAnalyzer;
         use crate::config::AnalyzerConfig;
-        
+
         let sample_rate = 16_000;
         let samples = synth_sine(sample_rate, 220.0, 0.5);
         let config = AnalyzerConfig::new(sample_rate);
-        
+
         let report = VoiceAnalyzer::analyze_buffer(config, &samples);
         assert!(!report.frames.is_empty());
-        
+
         // The last frame's cumulative stats should exactly match the overall analysis
         // because IncrementalSummarizer is used for both.
         let last_frame = report.frames.last().unwrap();

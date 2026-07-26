@@ -130,6 +130,7 @@ pub struct FrameAnalysis {
 
 #[derive(Debug, Clone)]
 pub(crate) struct FrameFeatures {
+    pub(crate) start_sample: usize,
     pub(crate) pitch_hz: Option<f32>,
     pub(crate) pitch_clarity: f32,
     pub(crate) spectral_rolloff_hz: f32,
