@@ -84,13 +84,22 @@ impl VoiceAnalyzer {
     }
 
     pub fn process_chunk(&mut self, samples: &[f32]) -> ChunkAnalysis {
-        self.process_chunk_with_frames(samples).0
+        self.process_chunk_internal(samples, false).0
     }
 
     pub fn process_chunk_with_frames(
         &mut self,
         samples: &[f32],
     ) -> (ChunkAnalysis, Vec<FrameAnalysis>) {
+        self.process_chunk_internal(samples, true)
+    }
+
+    fn process_chunk_internal(
+        &mut self,
+        samples: &[f32],
+        emit_frames: bool,
+    ) -> (ChunkAnalysis, Vec<FrameAnalysis>) {
+        self.compact_pending_if_needed(samples.len());
         let additional_frames = self.estimated_additional_frames(samples.len());
         self.reserve_for_samples(samples.len(), additional_frames);
         self.pending.extend_from_slice(samples);
@@ -108,11 +117,11 @@ impl VoiceAnalyzer {
             let is_voiced = self.is_voiced_frame(&features);
             self.capture_fft_spectrum(frame_start_sample, is_voiced);
             if is_voiced {
-                frame_features.push(features.clone());
                 self.voiced_frame_count += 1;
                 self.incremental_summarizer.add_frame(&features);
 
-                if self.output_options.frame_analysis {
+                if emit_frames {
+                    frame_features.push(features.clone());
                     let cumulative = self.incremental_summarizer.summarize(
                         frame_start_sample + self.config.frame_size,
                         self.voiced_frame_count,
@@ -122,6 +131,8 @@ impl VoiceAnalyzer {
                         features,
                         cumulative,
                     ));
+                } else {
+                    frame_features.push(features);
                 }
             }
         }
@@ -130,7 +141,9 @@ impl VoiceAnalyzer {
             last_frame.cumulative.processed_samples = self.processed_samples;
         }
 
-        self.compact_pending();
+        if self.pending_start >= self.config.frame_size.saturating_mul(2) {
+            self.compact_pending();
+        }
         let chunk = summarize_chunk(
             self.next_chunk_index,
             samples.len(),
@@ -156,14 +169,15 @@ impl VoiceAnalyzer {
         output_options: AnalysisOutputOptions,
     ) -> AnalysisReport {
         let mut analyzer = Self::new_with_output_options(config, output_options);
-        let (chunk, frames) = analyzer.process_chunk_with_frames(samples);
+        let emit_frames = analyzer.output_options.frame_analysis;
+        let (chunk, frames) = analyzer.process_chunk_internal(samples, emit_frames);
         let overall = analyzer.finalize();
         AnalysisReport {
             config: analyzer.config.clone(),
             frames,
             chunks: vec![chunk],
             overall,
-            fft_spectrum: analyzer.finalize_fft_spectrum(),
+            fft_spectrum: analyzer.take_fft_spectrum(),
         }
     }
 
@@ -190,7 +204,8 @@ impl VoiceAnalyzer {
         let mut chunks = Vec::new();
         let mut frames = Vec::new();
         for piece in samples.chunks(input_chunk_size.max(1)) {
-            let (chunk, chunk_frames) = analyzer.process_chunk_with_frames(piece);
+            let emit_frames = analyzer.output_options.frame_analysis;
+            let (chunk, chunk_frames) = analyzer.process_chunk_internal(piece, emit_frames);
             chunks.push(chunk);
             frames.extend(chunk_frames);
         }
@@ -200,7 +215,7 @@ impl VoiceAnalyzer {
             frames,
             chunks,
             overall,
-            fft_spectrum: analyzer.finalize_fft_spectrum(),
+            fft_spectrum: analyzer.take_fft_spectrum(),
         }
     }
 
@@ -213,6 +228,14 @@ impl VoiceAnalyzer {
         self.pending.copy_within(self.pending_start.., 0);
         self.pending.truncate(remaining);
         self.pending_start = 0;
+    }
+
+    fn compact_pending_if_needed(&mut self, incoming_samples: usize) {
+        if self.pending_start > 0
+            && self.pending.len().saturating_add(incoming_samples) > self.pending.capacity()
+        {
+            self.compact_pending();
+        }
     }
 
     fn reserve_for_samples(&mut self, incoming_samples: usize, additional_frames: usize) {
@@ -265,17 +288,19 @@ impl VoiceAnalyzer {
         });
     }
 
-    fn finalize_fft_spectrum(&self) -> Option<FftSpectrum> {
-        let frames = self.fft_spectrum_frames.as_ref()?;
+    pub fn take_fft_spectrum(&mut self) -> Option<FftSpectrum> {
+        let frames = self.fft_spectrum_frames.as_mut()?;
         if frames.is_empty() {
             return None;
         }
+
+        let frames = std::mem::take(frames);
 
         Some(FftSpectrum {
             frame_size: self.config.frame_size,
             hop_size: self.config.hop_size,
             bin_hz: self.config.sample_rate as f32 / self.config.frame_size as f32,
-            frames: frames.clone(),
+            frames,
         })
     }
 

@@ -1,6 +1,6 @@
 #[derive(Debug, Default)]
 pub(crate) struct HarmonicAnalyzer {
-    power_prefix_sums: Vec<f32>,
+    power_prefix_sums: Vec<f64>,
 }
 
 impl HarmonicAnalyzer {
@@ -33,7 +33,7 @@ impl HarmonicAnalyzer {
         self.power_prefix_sums.resize(magnitudes.len() + 1, 0.0);
         self.power_prefix_sums[0] = 0.0;
         for (index, magnitude) in magnitudes.iter().copied().enumerate() {
-            let power = magnitude * magnitude;
+            let power = f64::from(magnitude) * f64::from(magnitude);
             self.power_prefix_sums[index + 1] = self.power_prefix_sums[index] + power;
         }
 
@@ -68,7 +68,7 @@ impl HarmonicAnalyzer {
                 continue;
             };
 
-            let ratio = (band_power / fundamental_power).sqrt();
+            let ratio = (band_power / fundamental_power).sqrt() as f32;
             if ratio >= harmonic_min_strength_ratio {
                 strengths.push(Some(ratio));
             } else {
@@ -86,8 +86,8 @@ fn measure_harmonic_band_power(
     f0_hz: f32,
     harmonic_number: usize,
     max_frequency_hz: f32,
-    power_prefix_sums: &[f32],
-) -> Option<f32> {
+    power_prefix_sums: &[f64],
+) -> Option<f64> {
     let target_hz = harmonic_number as f32 * f0_hz;
     if target_hz > max_frequency_hz || harmonic_number == 0 {
         return None;

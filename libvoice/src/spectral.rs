@@ -136,7 +136,8 @@ impl FrameAnalyzer {
         for (index, magnitude) in self.magnitudes.iter().copied().enumerate() {
             let hz = self.hz_by_bin[index];
             let diff = hz - centroid;
-            let power = magnitude * magnitude;
+            let bin = self.fft_output[index];
+            let power = bin.re.mul_add(bin.re, bin.im * bin.im);
             bandwidth_sum += magnitude * diff * diff;
             cumulative += power;
             if rolloff_hz.is_none() && cumulative >= threshold {
@@ -185,7 +186,13 @@ impl FrameAnalyzer {
             start_sample,
             pitch_hz,
             pitch_clarity: pitch.map(|estimate| estimate.clarity).unwrap_or(0.0),
-            spectral_rolloff_hz: rolloff_hz.unwrap_or(0.0),
+            spectral_rolloff_hz: rolloff_hz.unwrap_or_else(|| {
+                if power_sum > 0.0 {
+                    self.hz_by_bin.last().copied().unwrap_or(0.0)
+                } else {
+                    0.0
+                }
+            }),
             spectral_centroid_hz: centroid,
             spectral_bandwidth_hz: bandwidth,
             spectral_flatness: flatness,
@@ -278,7 +285,8 @@ fn estimate_spectral_tilt_db_per_octave(
 
 #[cfg(test)]
 mod tests {
-    use super::estimate_spectral_tilt_db_per_octave;
+    use super::{FrameAnalyzer, estimate_spectral_tilt_db_per_octave};
+    use crate::{AnalyzerConfig, signal::hann_window};
 
     #[test]
     fn flat_spectrum_has_near_zero_tilt() {
@@ -348,5 +356,20 @@ mod tests {
             magnitudes.len() - 1,
         );
         assert!(tilt > 1.0, "tilt={tilt}");
+    }
+
+    #[test]
+    fn full_rolloff_ratio_reaches_the_highest_power_bin() {
+        let mut config = AnalyzerConfig::new(16_000);
+        config.rolloff_ratio = 1.0;
+        let window = hann_window(config.frame_size);
+        let frame_size = config.frame_size;
+        let mut analyzer = FrameAnalyzer::new(config, window);
+        let frame = (0..frame_size)
+            .map(|index| if index % 2 == 0 { 0.5 } else { -0.5 })
+            .collect::<Vec<_>>();
+
+        let features = analyzer.analyze(&frame, 0);
+        assert!(features.spectral_rolloff_hz > 7_900.0);
     }
 }

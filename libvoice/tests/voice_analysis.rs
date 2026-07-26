@@ -293,6 +293,39 @@ fn streaming_can_return_frame_level_results() {
 }
 
 #[test]
+fn summary_only_streaming_does_not_build_discarded_frame_reports() {
+    let sample_rate = 16_000;
+    let config = AnalyzerConfig::new(sample_rate);
+    let samples = synth_sine(sample_rate, 220.0, 1.0, 0.5);
+    let split = samples.len() / 2;
+
+    let mut analyzer = VoiceAnalyzer::new(config);
+    let first_chunk = analyzer.process_chunk(&samples[..split]);
+    assert!(first_chunk.frame_count > 0);
+
+    let (_, frames) = analyzer.process_chunk_with_frames(&samples[split..]);
+    assert!(!frames.is_empty());
+    assert_eq!(frames[0].frame_index, 0);
+}
+
+#[test]
+fn explicit_frame_method_ignores_report_frame_suppression() {
+    let sample_rate = 16_000;
+    let samples = synth_sine(sample_rate, 220.0, 0.5, 0.5);
+    let mut analyzer = VoiceAnalyzer::new_with_output_options(
+        AnalyzerConfig::new(sample_rate),
+        libvoice::AnalysisOutputOptions {
+            frame_analysis: false,
+            fft_spectrum: false,
+        },
+    );
+
+    let (chunk, frames) = analyzer.process_chunk_with_frames(&samples);
+    assert!(chunk.frame_count > 0);
+    assert_eq!(frames.len(), chunk.frame_count);
+}
+
+#[test]
 fn streaming_accumulates_metrics_consistently_with_variable_chunk_sizes() {
     let sample_rate = 16_000;
     let config = AnalyzerConfig::new(sample_rate);
@@ -592,4 +625,21 @@ fn silent_fft_spectrum_has_zero_frequency_statistics() {
             .iter()
             .all(|&value| value == 0.0)
     );
+}
+
+#[test]
+fn streaming_fft_spectrum_can_be_drained() {
+    let sample_rate = 16_000;
+    let samples = synth_sine(sample_rate, 220.0, 0.5, 0.5);
+    let mut analyzer = VoiceAnalyzer::new_with_output_options(
+        AnalyzerConfig::new(sample_rate),
+        libvoice::AnalysisOutputOptions {
+            frame_analysis: false,
+            fft_spectrum: true,
+        },
+    );
+
+    analyzer.process_chunk(&samples);
+    assert!(!analyzer.take_fft_spectrum().unwrap().frames.is_empty());
+    assert!(analyzer.take_fft_spectrum().is_none());
 }
